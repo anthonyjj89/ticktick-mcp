@@ -41,9 +41,7 @@ def initialize_client():
         ticktick = TickTickClient()
         logger.info("TickTick client initialized successfully")
         
-        # Bypass API connectivity check for now
-        return True
-        # Original Test API connectivity
+        # Test API connectivity
         projects = ticktick.get_projects()
         if 'error' in projects:
             logger.error(f"Failed to access TickTick API: {projects['error']}")
