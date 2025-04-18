@@ -227,7 +227,7 @@ class TickTickClient:
     
     def create_task(self, title: str, project_id: str, content: str = None, 
                    start_date: str = None, due_date: str = None, 
-                   priority: int = 0, is_all_day: bool = False) -> Dict:
+                   priority: int = 0, is_all_day: bool = False, repeat_flag: str = None) -> Dict:
         """Creates a new task."""
         data = {
             "title": title,
@@ -244,12 +244,15 @@ class TickTickClient:
             data["priority"] = priority
         if is_all_day is not None:
             data["isAllDay"] = is_all_day
+        if repeat_flag:
+            data["repeatFlag"] = repeat_flag
             
         return self._make_request("POST", "/task", data)
     
     def update_task(self, task_id: str, project_id: str, title: str = None, 
                    content: str = None, priority: int = None, 
-                   start_date: str = None, due_date: str = None) -> Dict:
+                   start_date: str = None, due_date: str = None,
+                   repeat_flag: str = None) -> Dict:
         """Updates an existing task."""
         data = {
             "id": task_id,
@@ -266,6 +269,8 @@ class TickTickClient:
             data["startDate"] = start_date
         if due_date:
             data["dueDate"] = due_date
+        if repeat_flag:
+            data["repeatFlag"] = repeat_flag
             
         return self._make_request("POST", f"/task/{task_id}", data)
     
