@@ -1,5 +1,9 @@
 # TickTick MCP Server
 
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
+
+> Enhanced fork with support for recurring tasks
+
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for TickTick that enables interacting with your TickTick task management system directly through Claude and other MCP clients.
 
 ## Features
@@ -9,6 +13,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 - 🔄 Update existing task details (title, content, dates, priority)
 - ✅ Mark tasks as complete
 - 🗑️ Delete tasks and projects
+- 🔁 Support for recurring tasks with customizable patterns
 - 🔄 Full integration with TickTick's open API
 - 🔌 Seamless integration with Claude and other MCP clients
 
@@ -23,7 +28,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 
 1. **Clone this repository**:
    ```bash
-   git clone https://github.com/parkjs814/ticktick-mcp.git
+   git clone https://github.com/anthonyjj89/ticktick-mcp.git
    cd ticktick-mcp
    ```
 
@@ -122,8 +127,8 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 | `get_project` | Get details about a specific project | `project_id` |
 | `get_project_tasks` | List all tasks in a project | `project_id` |
 | `get_task` | Get details about a specific task | `project_id`, `task_id` |
-| `create_task` | Create a new task | `title`, `project_id`, `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional) |
-| `update_task` | Update an existing task | `task_id`, `project_id`, `title` (optional), `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional) |
+| `create_task` | Create a new task | `title`, `project_id`, `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional) |
+| `update_task` | Update an existing task | `task_id`, `project_id`, `title` (optional), `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional) |
 | `complete_task` | Mark a task as complete | `project_id`, `task_id` |
 | `delete_task` | Delete a task | `project_id`, `task_id` |
 | `create_project` | Create a new project | `name`, `color` (optional), `view_mode` (optional) |
@@ -139,6 +144,24 @@ Here are some example prompts to use with Claude after connecting the TickTick M
 - "Mark the task 'Buy groceries' as complete"
 - "Create a new project called 'Vacation Planning' with a blue color"
 - "When is my next deadline in TickTick?"
+- "Create a weekly recurring task called 'Team Meeting' in my work project due every Monday at 10:00 AM"
+
+## Recurring Tasks
+
+This MCP supports creating and updating recurring tasks in TickTick through the `repeat_flag` parameter. The recurrence pattern follows the iCalendar RRULE format.
+
+Example recurrence patterns:
+- Daily: `RRULE:FREQ=DAILY;INTERVAL=1`
+- Weekly: `RRULE:FREQ=WEEKLY;INTERVAL=1`
+- Monthly: `RRULE:FREQ=MONTHLY;INTERVAL=1`
+- Every 2 days: `RRULE:FREQ=DAILY;INTERVAL=2`
+- Every 2 weeks: `RRULE:FREQ=WEEKLY;INTERVAL=2`
+
+To create a recurring task, simply add the `repeat_flag` parameter when creating or updating a task:
+
+```
+Create a weekly recurring task called "Status Meeting" in my project with medium priority, due every Monday at 9:00 AM.
+```
 
 ## Development
 
