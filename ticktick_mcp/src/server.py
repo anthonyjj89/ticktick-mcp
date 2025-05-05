@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -59,7 +59,9 @@ def initialize_client():
 # Format a task object from TickTick for better display
 def format_task(task: Dict) -> str:
     """Format a task into a human-readable string."""
-    formatted = f"Title: {task.get('title', 'No title')}\n"
+    # Make the task ID clearly visible at the top
+    formatted = f"===== TASK ID: {task.get('id', 'Unknown')} =====\n"
+    formatted += f"Title: {task.get('title', 'No title')}\n"
     
     # Add project ID
     formatted += f"Project ID: {task.get('projectId', 'None')}\n"
@@ -70,14 +72,25 @@ def format_task(task: Dict) -> str:
     if task.get('dueDate'):
         formatted += f"Due Date: {task.get('dueDate')}\n"
     
+    # Calculate task age if we have creation or completion time
+    created_time = None
+    if task.get('createdTime'):
+        created_time = task.get('createdTime')
+        formatted += f"Created: {created_time}\n"
+    
     # Add priority if available
     priority_map = {0: "None", 1: "Low", 3: "Medium", 5: "High"}
     priority = task.get('priority', 0)
     formatted += f"Priority: {priority_map.get(priority, str(priority))}\n"
     
-    # Add status if available
-    status = "Completed" if task.get('status') == 2 else "Active"
-    formatted += f"Status: {status}\n"
+    # Add status if available with more details
+    status_map = {0: "Active", 1: "Completed", 2: "Archived"}
+    status = task.get('status', 0)
+    formatted += f"Status: {status_map.get(status, f'Unknown ({status})')}\n"
+    
+    # Add completion time if available
+    if task.get('completedTime'):
+        formatted += f"Completed: {task.get('completedTime')}\n"
     
     # Add content if available
     if task.get('content'):
@@ -89,15 +102,20 @@ def format_task(task: Dict) -> str:
         formatted += f"\nSubtasks ({len(items)}):\n"
         for i, item in enumerate(items, 1):
             status = "✓" if item.get('status') == 1 else "□"
-            formatted += f"{i}. [{status}] {item.get('title', 'No title')}\n"
+            item_id = item.get('id', 'Unknown')
+            formatted += f"{i}. [{status}] {item.get('title', 'No title')} (ID: {item_id})\n"
+    
+    # Add footer with task ID for easy reference
+    formatted += f"\n===== END OF TASK {task.get('id', 'Unknown')} =====\n"
     
     return formatted
 
 # Format a project object from TickTick for better display
 def format_project(project: Dict) -> str:
     """Format a project into a human-readable string."""
-    formatted = f"Name: {project.get('name', 'No name')}\n"
-    formatted += f"ID: {project.get('id', 'No ID')}\n"
+    # Make the project ID clearly visible
+    formatted = f"===== PROJECT ID: {project.get('id', 'Unknown')} =====\n"
+    formatted += f"Name: {project.get('name', 'No name')}\n"
     
     # Add color if available
     if project.get('color'):
@@ -114,6 +132,13 @@ def format_project(project: Dict) -> str:
     # Add kind if available
     if project.get('kind'):
         formatted += f"Kind: {project.get('kind')}\n"
+    
+    # Add permission if available
+    if project.get('permission'):
+        formatted += f"Permission: {project.get('permission')}\n"
+    
+    # Add footer with project ID for easy reference
+    formatted += f"\n===== END OF PROJECT {project.get('id', 'Unknown')} =====\n"
     
     return formatted
 
@@ -134,9 +159,17 @@ async def get_projects() -> str:
         if not projects:
             return "No projects found."
         
-        result = f"Found {len(projects)} projects:\n\n"
-        for i, project in enumerate(projects, 1):
-            result += f"Project {i}:\n" + format_project(project) + "\n"
+        # Sort projects by name for easier reference
+        sorted_projects = sorted(projects, key=lambda p: p.get('name', '').lower())
+        
+        result = f"Found {len(sorted_projects)} projects:\n\n"
+        result += "Quick reference (name and ID):\n"
+        for i, project in enumerate(sorted_projects, 1):
+            result += f"{i}. {project.get('name', 'Unnamed')} - ID: {project.get('id', 'Unknown')}\n"
+        
+        result += "\nDetailed project information:\n"
+        for i, project in enumerate(sorted_projects, 1):
+            result += f"\nProject {i}:\n" + format_project(project)
         
         return result
     except Exception as e:
@@ -186,9 +219,15 @@ async def get_project_tasks(project_id: str) -> str:
         if not tasks:
             return f"No tasks found in project '{project_data.get('project', {}).get('name', project_id)}'."
         
+        # Add task IDs to the response summary
         result = f"Found {len(tasks)} tasks in project '{project_data.get('project', {}).get('name', project_id)}':\n\n"
+        result += "Quick reference (task titles and IDs):\n"
         for i, task in enumerate(tasks, 1):
-            result += f"Task {i}:\n" + format_task(task) + "\n"
+            result += f"{i}. {task.get('title', 'Unnamed')} - ID: {task.get('id', 'Unknown')}\n"
+        
+        result += "\nDetailed task information:\n"
+        for i, task in enumerate(tasks, 1):
+            result += f"\nTask {i}:\n" + format_task(task)
         
         return result
     except Exception as e:
@@ -217,6 +256,176 @@ async def get_task(project_id: str, task_id: str) -> str:
     except Exception as e:
         logger.error(f"Error in get_task: {e}")
         return f"Error retrieving task: {str(e)}"
+
+@mcp.tool()
+async def list_all_tasks() -> str:
+    """
+    Fetch all tasks from all projects with their IDs for easy reference.
+    This tool makes it easy to find tasks across all projects.
+    """
+    if not ticktick:
+        if not initialize_client():
+            return "Failed to initialize TickTick client. Please check your API credentials."
+    
+    try:
+        # Get all projects first
+        projects = ticktick.get_projects()
+        if 'error' in projects:
+            return f"Error fetching projects: {projects['error']}"
+        
+        if not projects:
+            return "No projects found."
+        
+        # Sort projects by name
+        sorted_projects = sorted(projects, key=lambda p: p.get('name', '').lower())
+        
+        all_tasks = []
+        project_names = {}
+        
+        # Get tasks from each project
+        for project in sorted_projects:
+            project_id = project.get('id')
+            project_name = project.get('name', 'Unnamed Project')
+            project_names[project_id] = project_name
+            
+            logger.info(f"Fetching tasks from project '{project_name}' (ID: {project_id})")
+            project_data = ticktick.get_project_with_data(project_id)
+            
+            if 'error' in project_data:
+                logger.warning(f"Error fetching tasks from project '{project_name}': {project_data['error']}")
+                continue
+            
+            tasks = project_data.get('tasks', [])
+            for task in tasks:
+                # Add project name to the task for reference
+                task['project_name'] = project_name
+                all_tasks.append(task)
+        
+        if not all_tasks:
+            return "No tasks found in any projects."
+        
+        # Sort tasks by title for easier lookup
+        sorted_tasks = sorted(all_tasks, key=lambda t: t.get('title', '').lower())
+        
+        result = f"Found {len(sorted_tasks)} tasks across {len(sorted_projects)} projects:\n\n"
+        result += "Quick reference table (task titles and IDs):\n"
+        result += "--------------------------------------------------------\n"
+        result += "| Task Title | Task ID | Project | Status |\n"
+        result += "--------------------------------------------------------\n"
+        
+        for task in sorted_tasks:
+            title = task.get('title', 'Unnamed')[:30] + ('...' if len(task.get('title', '')) > 30 else '')
+            task_id = task.get('id', 'Unknown')
+            project_name = task.get('project_name', 'Unknown')[:20] + ('...' if len(task.get('project_name', '')) > 20 else '')
+            
+            status_map = {0: "Active", 1: "Completed", 2: "Archived"}
+            status = status_map.get(task.get('status', 0), "Unknown")
+            
+            result += f"| {title:<33} | {task_id:<24} | {project_name:<23} | {status:<10} |\n"
+        
+        result += "--------------------------------------------------------\n"
+        result += "\nNote: To get detailed information about a specific task, use 'get_task' with the project ID and task ID."
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in list_all_tasks: {e}")
+        return f"Error retrieving all tasks: {str(e)}"
+
+@mcp.tool()
+async def find_old_tasks(days: int = 30) -> str:
+    """
+    Find tasks that have not been updated in a specified number of days.
+    Useful for identifying stale tasks for cleanup.
+    
+    Args:
+        days: Number of days to consider a task as old (default: 30)
+    """
+    if not ticktick:
+        if not initialize_client():
+            return "Failed to initialize TickTick client. Please check your API credentials."
+    
+    if days <= 0:
+        return "Days must be a positive number."
+    
+    try:
+        # Get all projects first
+        projects = ticktick.get_projects()
+        if 'error' in projects:
+            return f"Error fetching projects: {projects['error']}"
+        
+        if not projects:
+            return "No projects found."
+        
+        # Calculate the cutoff date
+        now = datetime.now(timezone.utc)
+        cutoff_date = now - timedelta(days=days)
+        
+        old_tasks = []
+        project_names = {}
+        
+        # Get tasks from each project
+        for project in projects:
+            project_id = project.get('id')
+            project_name = project.get('name', 'Unnamed Project')
+            project_names[project_id] = project_name
+            
+            logger.info(f"Checking project '{project_name}' for old tasks")
+            project_data = ticktick.get_project_with_data(project_id)
+            
+            if 'error' in project_data:
+                logger.warning(f"Error fetching tasks from project '{project_name}': {project_data['error']}")
+                continue
+            
+            tasks = project_data.get('tasks', [])
+            for task in tasks:
+                # Check task age based on creation/modification time
+                # TickTick API might have different date fields, adjust as needed
+                task_date = None
+                
+                # Try to find a date to use for comparison
+                if task.get('modifiedTime'):
+                    task_date = datetime.fromisoformat(task.get('modifiedTime').replace('Z', '+00:00'))
+                elif task.get('createdTime'):
+                    task_date = datetime.fromisoformat(task.get('createdTime').replace('Z', '+00:00'))
+                elif task.get('startDate'):
+                    task_date = datetime.fromisoformat(task.get('startDate').replace('Z', '+00:00'))
+                
+                # Compare date if we found one
+                if task_date and task_date < cutoff_date:
+                    # Add project name to the task for reference
+                    task['project_name'] = project_name
+                    task['task_date'] = task_date
+                    old_tasks.append(task)
+        
+        if not old_tasks:
+            return f"No tasks found that are older than {days} days."
+        
+        # Sort tasks by age (oldest first)
+        sorted_tasks = sorted(old_tasks, key=lambda t: t.get('task_date', now))
+        
+        result = f"Found {len(sorted_tasks)} tasks older than {days} days:\n\n"
+        result += "Old Tasks (sorted by age, oldest first):\n"
+        result += "--------------------------------------------------------\n"
+        result += "| Task Title | Age (days) | Project | Task ID |\n"
+        result += "--------------------------------------------------------\n"
+        
+        for task in sorted_tasks:
+            title = task.get('title', 'Unnamed')[:30] + ('...' if len(task.get('title', '')) > 30 else '')
+            task_id = task.get('id', 'Unknown')
+            project_name = task.get('project_name', 'Unknown')[:20] + ('...' if len(task.get('project_name', '')) > 20 else '')
+            
+            # Calculate age in days
+            age_days = (now - task.get('task_date', now)).days
+            
+            result += f"| {title:<33} | {age_days:<10} | {project_name:<23} | {task_id} |\n"
+        
+        result += "--------------------------------------------------------\n"
+        result += "\nTo delete or update any of these tasks, use 'delete_task' or 'update_task' with the appropriate project ID and task ID."
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in find_old_tasks: {e}")
+        return f"Error finding old tasks: {str(e)}"
 
 @mcp.tool()
 async def create_task(
@@ -249,6 +458,11 @@ async def create_task(
         return "Invalid priority. Must be 0 (None), 1 (Low), 3 (Medium), or 5 (High)."
     
     try:
+        # Verify the project exists first
+        project = ticktick.get_project(project_id)
+        if 'error' in project:
+            return f"Error: Project not found. {project['error']}"
+        
         # Validate dates if provided
         for date_str, date_name in [(start_date, "start_date"), (due_date, "due_date")]:
             if date_str:
@@ -274,6 +488,12 @@ async def create_task(
         
         if 'error' in task:
             return f"Error creating task: {task['error']}"
+        
+        # Verify task was created by trying to fetch it
+        verification = ticktick.get_task(project_id, task.get('id', ''))
+        if 'error' in verification:
+            logger.warning(f"Task creation reported as successful, but verification failed: {verification['error']}")
+            return f"Task creation reported as successful, but verification failed. The task may or may not have been created.\n\nReported task details:\n{format_task(task)}"
         
         return f"Task created successfully:\n\n" + format_task(task)
     except Exception as e:
@@ -308,11 +528,21 @@ async def update_task(
         if not initialize_client():
             return "Failed to initialize TickTick client. Please check your API credentials."
     
-    # Validate priority if provided
-    if priority is not None and priority not in [0, 1, 3, 5]:
-        return "Invalid priority. Must be 0 (None), 1 (Low), 3 (Medium), or 5 (High)."
-    
+    # First, verify task exists
     try:
+        existing_task = ticktick.get_task(project_id, task_id)
+        if 'error' in existing_task:
+            return f"Failed to find task to update: {existing_task['error']}"
+        
+        logger.info(f"Updating task {task_id} in project {project_id}")
+        
+        # Show current task info
+        current_task_info = f"Current task before update:\n{format_task(existing_task)}\n"
+        
+        # Validate priority if provided
+        if priority is not None and priority not in [0, 1, 3, 5]:
+            return "Invalid priority. Must be 0 (None), 1 (Low), 3 (Medium), or 5 (High)."
+        
         # Validate dates if provided
         for date_str, date_name in [(start_date, "start_date"), (due_date, "due_date")]:
             if date_str:
@@ -321,11 +551,30 @@ async def update_task(
                     datetime.fromisoformat(date_str.replace("Z", "+00:00"))
                 except ValueError:
                     return f"Invalid {date_name} format. Use ISO format: YYYY-MM-DDThh:mm:ss+0000"
-        
+            
         # Validate repeat_flag if provided
         if repeat_flag and not repeat_flag.startswith("RRULE:"):
             return "Invalid repeat_flag format. Must start with 'RRULE:'"
         
+        # Prepare changes summary
+        changes = []
+        if title is not None and title != existing_task.get('title'):
+            changes.append(f"Title: '{existing_task.get('title', '')}' → '{title}'")
+        if content is not None and content != existing_task.get('content'):
+            changes.append("Content updated")
+        if start_date is not None and start_date != existing_task.get('startDate'):
+            changes.append(f"Start date: '{existing_task.get('startDate', '')}' → '{start_date}'")
+        if due_date is not None and due_date != existing_task.get('dueDate'):
+            changes.append(f"Due date: '{existing_task.get('dueDate', '')}' → '{due_date}'")
+        if priority is not None and priority != existing_task.get('priority'):
+            priority_map = {0: "None", 1: "Low", 3: "Medium", 5: "High"}
+            old_priority = priority_map.get(existing_task.get('priority', 0), str(existing_task.get('priority', 0)))
+            new_priority = priority_map.get(priority, str(priority))
+            changes.append(f"Priority: '{old_priority}' → '{new_priority}'")
+        if repeat_flag is not None and repeat_flag != existing_task.get('repeatFlag'):
+            changes.append(f"Repeat flag: '{existing_task.get('repeatFlag', '')}' → '{repeat_flag}'")
+        
+        # Update the task
         task = ticktick.update_task(
             task_id=task_id,
             project_id=project_id,
@@ -340,7 +589,17 @@ async def update_task(
         if 'error' in task:
             return f"Error updating task: {task['error']}"
         
-        return f"Task updated successfully:\n\n" + format_task(task)
+        # Verify update by comparing with before
+        if not changes:
+            return f"No changes were made to the task.\n\n{format_task(task)}"
+        
+        # Build response with changes summary
+        changes_summary = "\n".join([f"- {change}" for change in changes])
+        response = f"Task updated successfully with the following changes:\n{changes_summary}\n\n"
+        response += format_task(task)
+        
+        return response
+        
     except Exception as e:
         logger.error(f"Error in update_task: {e}")
         return f"Error updating task: {str(e)}"
@@ -359,11 +618,34 @@ async def complete_task(project_id: str, task_id: str) -> str:
             return "Failed to initialize TickTick client. Please check your API credentials."
     
     try:
+        # First, verify task exists and show what's being completed
+        task = ticktick.get_task(project_id, task_id)
+        if 'error' in task:
+            return f"Error finding task to complete: {task['error']}"
+        
+        if task.get('status') == 2:
+            return f"Task is already marked as complete.\n\n{format_task(task)}"
+        
+        # Task info before completion
+        task_info = format_task(task)
+        
+        # Complete the task
         result = ticktick.complete_task(project_id, task_id)
         if 'error' in result:
             return f"Error completing task: {result['error']}"
         
-        return f"Task {task_id} marked as complete."
+        # Verify task was marked as complete
+        updated_task = ticktick.get_task(project_id, task_id)
+        if 'error' in updated_task:
+            logger.warning(f"Task completion verification failed: {updated_task['error']}")
+            return f"Task marked as complete, but verification failed. Task status might not have updated.\n\nTask before completion:\n{task_info}"
+        
+        # Check if status changed
+        if updated_task.get('status') != 2:
+            logger.warning(f"Task completion reported as successful, but status is still {updated_task.get('status')}")
+            return f"Task completion reported as successful, but status did not change to completed.\n\nCurrent task status:\n{format_task(updated_task)}"
+        
+        return f"Task marked as complete successfully.\n\nUpdated task details:\n{format_task(updated_task)}"
     except Exception as e:
         logger.error(f"Error in complete_task: {e}")
         return f"Error completing task: {str(e)}"
@@ -382,11 +664,30 @@ async def delete_task(project_id: str, task_id: str) -> str:
             return "Failed to initialize TickTick client. Please check your API credentials."
     
     try:
+        # First, get the task to verify it exists and show what's being deleted
+        task = ticktick.get_task(project_id, task_id)
+        if 'error' in task:
+            return f"Error finding task to delete: {task['error']}"
+        
+        # Show task details before deletion
+        task_info = format_task(task)
+        
+        # Delete the task
         result = ticktick.delete_task(project_id, task_id)
         if 'error' in result:
             return f"Error deleting task: {result['error']}"
         
-        return f"Task {task_id} deleted successfully."
+        # Verify deletion by checking if task still exists
+        verification = ticktick.get_task(project_id, task_id)
+        if 'error' in verification and "404" in str(verification.get('error', '')):
+            # Task not found, deletion was successful
+            return f"Task deleted successfully:\n\nDeleted task details:\n{task_info}"
+        elif 'error' in verification:
+            # Some other error occurred
+            return f"Task deletion reported as successful, but verification failed: {verification['error']}\n\nDeleted task details:\n{task_info}"
+        else:
+            # Task still exists
+            return f"Error: Task deletion reported as successful, but task still exists.\n\nTask details:\n{task_info}"
     except Exception as e:
         logger.error(f"Error in delete_task: {e}")
         return f"Error deleting task: {str(e)}"
@@ -441,11 +742,38 @@ async def delete_project(project_id: str) -> str:
             return "Failed to initialize TickTick client. Please check your API credentials."
     
     try:
+        # First, verify project exists and show what's being deleted
+        project = ticktick.get_project(project_id)
+        if 'error' in project:
+            return f"Error finding project to delete: {project['error']}"
+        
+        # Get tasks in the project before deletion for reference
+        project_data = ticktick.get_project_with_data(project_id)
+        tasks = project_data.get('tasks', []) if 'error' not in project_data else []
+        
+        # Show project details before deletion
+        project_info = format_project(project)
+        task_count = len(tasks)
+        
+        # Warning about tasks that will be deleted
+        warning = f"WARNING: This project contains {task_count} tasks that will also be deleted.\n\n" if task_count > 0 else ""
+        
+        # Delete the project
         result = ticktick.delete_project(project_id)
         if 'error' in result:
             return f"Error deleting project: {result['error']}"
         
-        return f"Project {project_id} deleted successfully."
+        # Verify deletion by checking if project still exists
+        verification = ticktick.get_project(project_id)
+        if 'error' in verification and "404" in str(verification.get('error', '')):
+            # Project not found, deletion was successful
+            return f"Project deleted successfully:\n\n{warning}Deleted project details:\n{project_info}"
+        elif 'error' in verification:
+            # Some other error occurred
+            return f"Project deletion reported as successful, but verification failed: {verification['error']}\n\n{warning}Deleted project details:\n{project_info}"
+        else:
+            # Project still exists
+            return f"Error: Project deletion reported as successful, but project still exists.\n\nProject details:\n{project_info}"
     except Exception as e:
         logger.error(f"Error in delete_project: {e}")
         return f"Error deleting project: {str(e)}"

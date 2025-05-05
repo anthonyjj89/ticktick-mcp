@@ -1,42 +1,39 @@
 # TickTick MCP Server
 
-![Version](https://img.shields.io/badge/version-1.1.0-blue)
+![Version](https://img.shields.io/badge/version-1.2.0-blue)
 
-> Enhanced fork with support for recurring tasks
+> Enhanced TickTick integration for Claude with improved task management and robust API support
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for TickTick that enables interacting with your TickTick task management system directly through Claude and other MCP clients.
 
 ## Features
 
-- 📋 View all your TickTick projects and tasks
+- 📋 View all your TickTick projects and tasks with clear ID references
 - ✏️ Create new projects and tasks through natural language
-- 🔄 Update existing task details (title, content, dates, priority)
-- ✅ Mark tasks as complete
-- 🗑️ Delete tasks and projects
+- 🔄 Update existing task details with better change tracking
+- ✅ Mark tasks as complete with verification
+- 🗑️ Delete tasks and projects with robust error handling
+- 🔍 Find and list all tasks across projects for easy management
+- 🧹 Identify old/stale tasks for cleanup
 - 🔁 Support for recurring tasks with customizable patterns
 - 🔄 Full integration with TickTick's open API
 - 🔌 Seamless integration with Claude and other MCP clients
 
-## Recent Enhancement: Recurring Tasks
+## Recent Enhancements
 
-This fork adds support for creating and updating recurring tasks in TickTick through the MCP server.
+### Version 1.2.0 (Current)
 
-### How to Use Recurring Tasks
+- **Improved Task Identification**: Tasks now prominently display their IDs for easier reference
+- **Robust Update/Delete Operations**: Better error handling and verification for all CRUD operations
+- **Task Lookup Tool**: New `list_all_tasks` function to quickly find task IDs across all projects
+- **Task Cleanup Tool**: New `find_old_tasks` function to identify stale tasks for maintenance
+- **Enhanced Error Messages**: More informative error responses for troubleshooting
+- **Verification Steps**: All operations now include verification to ensure success
+- **Better API Integration**: Improved error handling and response validation
 
-Set the `repeat_flag` parameter when creating or updating tasks. Examples:
+### Version 1.1.0
 
-- Daily recurring: `RRULE:FREQ=DAILY;INTERVAL=1`
-- Weekly recurring: `RRULE:FREQ=WEEKLY;INTERVAL=1`
-- Monthly recurring: `RRULE:FREQ=MONTHLY;INTERVAL=1`
-- Every 2 days: `RRULE:FREQ=DAILY;INTERVAL=2`
-
-Example usage in Claude:
-
-```
-Create a daily recurring task called "Morning standup" with Medium priority in my Work project, with a due date of tomorrow at 9:00 AM.
-```
-
-Note: A start_date or due_date should be set for the recurrence pattern to display correctly in the TickTick interface.
+- Added support for recurring tasks with customizable patterns
 
 ## Prerequisites
 
@@ -148,12 +145,34 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 | `get_project` | Get details about a specific project | `project_id` |
 | `get_project_tasks` | List all tasks in a project | `project_id` |
 | `get_task` | Get details about a specific task | `project_id`, `task_id` |
+| `list_all_tasks` | List all tasks across all projects | None |
+| `find_old_tasks` | Find tasks that haven't been updated | `days` (default: 30) |
 | `create_task` | Create a new task | `title`, `project_id`, `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional) |
 | `update_task` | Update an existing task | `task_id`, `project_id`, `title` (optional), `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional) |
 | `complete_task` | Mark a task as complete | `project_id`, `task_id` |
 | `delete_task` | Delete a task | `project_id`, `task_id` |
 | `create_project` | Create a new project | `name`, `color` (optional), `view_mode` (optional) |
 | `delete_project` | Delete a project | `project_id` |
+
+## New Tools
+
+### Task Management and Discovery
+
+#### `list_all_tasks`
+This tool fetches all tasks from all projects and displays them in a readable format with their IDs for easy reference. It's particularly useful when you need to quickly find a task but don't remember which project it's in.
+
+Example prompt:
+```
+Show me all my tasks across all projects
+```
+
+#### `find_old_tasks`
+This tool helps identify tasks that haven't been updated in a while, making it easier to clean up stale tasks. You can specify the number of days to consider a task "old".
+
+Example prompt:
+```
+Find tasks that haven't been updated in the last 60 days
+```
 
 ## Example Prompts for Claude
 
@@ -162,12 +181,15 @@ Here are some example prompts to use with Claude after connecting the TickTick M
 - "Show me all my TickTick projects"
 - "Create a new task called 'Finish MCP server documentation' in my work project with high priority"
 - "List all tasks in my personal project"
-- "Mark the task 'Buy groceries' as complete"
+- "Show me all tasks across all projects so I can find task IDs"
+- "Find tasks that haven't been updated in the last 30 days"
+- "Mark the task with ID '61234567891a1b2c3d4e5f6' as complete"
+- "Update the content of task '71234567891a1b2c3d4e5f7' to include meeting notes"
 - "Create a new project called 'Vacation Planning' with a blue color"
-- "When is my next deadline in TickTick?"
+- "Delete task '81234567891a1b2c3d4e5f8' from project '91234567891a1b2c3d4e5f9'"
 - "Create a weekly recurring task called 'Team Meeting' in my work project due every Monday at 10:00 AM"
 
-## Recurring Tasks
+## Using Recurring Tasks
 
 This MCP supports creating and updating recurring tasks in TickTick through the `repeat_flag` parameter. The recurrence pattern follows the iCalendar RRULE format.
 
@@ -177,12 +199,16 @@ Example recurrence patterns:
 - Monthly: `RRULE:FREQ=MONTHLY;INTERVAL=1`
 - Every 2 days: `RRULE:FREQ=DAILY;INTERVAL=2`
 - Every 2 weeks: `RRULE:FREQ=WEEKLY;INTERVAL=2`
+- Every Monday, Wednesday, Friday: `RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR`
+- First day of month: `RRULE:FREQ=MONTHLY;BYMONTHDAY=1`
 
 To create a recurring task, simply add the `repeat_flag` parameter when creating or updating a task:
 
 ```
-Create a weekly recurring task called "Status Meeting" in my project with medium priority, due every Monday at 9:00 AM.
+Create a weekly recurring task called "Status Meeting" in my project with medium priority, due every Monday at 9:00 AM
 ```
+
+Note: A start_date or due_date should be set for the recurrence pattern to display correctly in the TickTick interface.
 
 ## Development
 
@@ -218,6 +244,15 @@ The project implements a complete OAuth 2.0 flow for TickTick:
 6. **Token Refresh**: The client automatically refreshes the access token when it expires
 
 This simplifies the user experience by handling the entire OAuth flow programmatically.
+
+### Error Handling and Verification
+
+The improved MCP includes enhanced error handling and verification steps for all operations:
+
+1. **Pre-operation Verification**: Before performing operations like update or delete, the system verifies that the target exists
+2. **Detailed Error Messages**: Error responses include more detailed information to assist troubleshooting
+3. **Post-operation Verification**: After operations are performed, the system verifies that the changes were applied correctly
+4. **Change Tracking**: For update operations, the system shows which fields were changed and their old/new values
 
 ### Contributing
 

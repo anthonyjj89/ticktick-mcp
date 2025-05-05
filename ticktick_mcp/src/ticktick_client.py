@@ -4,6 +4,7 @@ import base64
 import requests
 import logging
 from pathlib import Path
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from typing import Dict, List, Any, Optional, Tuple
 
@@ -142,6 +143,11 @@ class TickTickClient:
         url = f"{self.base_url}{endpoint}"
         
         try:
+            # Log request details for debugging
+            logger.debug(f"Making {method} request to {url}")
+            if data:
+                logger.debug(f"Request data: {json.dumps(data, indent=2)}")
+            
             # Make the request
             if method == "GET":
                 response = requests.get(url, headers=self.headers)
@@ -158,6 +164,7 @@ class TickTickClient:
                 
                 # Try to refresh the access token
                 if self._refresh_access_token():
+                    logger.info("Token refreshed. Retrying request...")
                     # Retry the request with the new token
                     if method == "GET":
                         response = requests.get(url, headers=self.headers)
@@ -165,23 +172,51 @@ class TickTickClient:
                         response = requests.post(url, headers=self.headers, json=data)
                     elif method == "DELETE":
                         response = requests.delete(url, headers=self.headers)
+                else:
+                    logger.error("Failed to refresh token. Please re-authenticate.")
+                    return {"error": "Authentication failed. Please run 'uv run -m ticktick_mcp.cli auth' to reauthenticate."}
             
-            # Raise an exception for 4xx/5xx status codes
-            response.raise_for_status()
+            # Capture detailed error information from 4xx/5xx responses
+            if response.status_code >= 400:
+                error_message = f"API request failed with status code: {response.status_code}"
+                try:
+                    error_detail = response.json()
+                    error_message += f" - {json.dumps(error_detail)}"
+                except Exception:
+                    error_message += f" - {response.text if response.text else 'No error details available'}"
+                    
+                logger.error(error_message)
+                return {"error": error_message}
             
             # Return empty dict for 204 No Content
             if response.status_code == 204:
-                return {}
+                return {"success": True, "message": "Operation completed successfully"}
             
-            return response.json()
+            # Parse and validate the response
+            try:
+                result = response.json()
+                logger.debug(f"API response: {json.dumps(result, indent=2)}")
+                return result
+            except json.JSONDecodeError:
+                if response.text:
+                    return {"error": f"Invalid JSON response: {response.text}"}
+                return {"success": True, "message": "Operation completed successfully"}
+                
         except requests.exceptions.RequestException as e:
-            logger.error(f"API request failed: {e}")
-            return {"error": str(e)}
+            error_message = f"API request failed: {str(e)}"
+            logger.error(error_message)
+            return {"error": error_message}
     
     # Project methods
     def get_projects(self) -> List[Dict]:
         """Gets all projects for the user."""
-        return self._make_request("GET", "/project")
+        result = self._make_request("GET", "/project")
+        if isinstance(result, list):
+            # Add a visible identifier to each project
+            for project in result:
+                if 'id' in project and 'name' in project:
+                    project['identifier'] = f"{project['name']} (ID: {project['id']})"
+        return result
     
     def get_project(self, project_id: str) -> Dict:
         """Gets a specific project by ID."""
@@ -254,25 +289,65 @@ class TickTickClient:
                    start_date: str = None, due_date: str = None,
                    repeat_flag: str = None) -> Dict:
         """Updates an existing task."""
-        data = {
-            "id": task_id,
-            "projectId": project_id
-        }
-        
-        if title:
-            data["title"] = title
-        if content:
-            data["content"] = content
-        if priority is not None:
-            data["priority"] = priority
-        if start_date:
-            data["startDate"] = start_date
-        if due_date:
-            data["dueDate"] = due_date
-        if repeat_flag:
-            data["repeatFlag"] = repeat_flag
+        # First, get the current task to preserve existing data
+        try:
+            current_task = self.get_task(project_id, task_id)
+            if 'error' in current_task:
+                return current_task  # Return the error
             
-        return self._make_request("POST", f"/task/{task_id}", data)
+            # Start with the current task data
+            data = {
+                "id": task_id,
+                "projectId": project_id
+            }
+            
+            # Update only the fields that are provided
+            if title is not None:
+                data["title"] = title
+            elif "title" in current_task:
+                data["title"] = current_task["title"]
+                
+            if content is not None:
+                data["content"] = content
+            elif "content" in current_task:
+                data["content"] = current_task["content"]
+                
+            if priority is not None:
+                data["priority"] = priority
+            elif "priority" in current_task:
+                data["priority"] = current_task["priority"]
+                
+            if start_date is not None:
+                data["startDate"] = start_date
+            elif "startDate" in current_task:
+                data["startDate"] = current_task["startDate"]
+                
+            if due_date is not None:
+                data["dueDate"] = due_date
+            elif "dueDate" in current_task:
+                data["dueDate"] = current_task["dueDate"]
+                
+            if repeat_flag is not None:
+                data["repeatFlag"] = repeat_flag
+            elif "repeatFlag" in current_task:
+                data["repeatFlag"] = current_task["repeatFlag"]
+            
+            # Include status if present in the current task
+            if "status" in current_task:
+                data["status"] = current_task["status"]
+                
+            # Include isAllDay if present in the current task
+            if "isAllDay" in current_task:
+                data["isAllDay"] = current_task["isAllDay"]
+            
+            # Log the update data for debugging
+            logger.debug(f"Updating task {task_id} with data: {json.dumps(data, indent=2)}")
+            
+            return self._make_request("POST", f"/task/{task_id}", data)
+            
+        except Exception as e:
+            logger.error(f"Error updating task {task_id}: {e}")
+            return {"error": f"Failed to update task: {str(e)}"}
     
     def complete_task(self, project_id: str, task_id: str) -> Dict:
         """Marks a task as complete."""
@@ -280,4 +355,32 @@ class TickTickClient:
     
     def delete_task(self, project_id: str, task_id: str) -> Dict:
         """Deletes a task."""
-        return self._make_request("DELETE", f"/project/{project_id}/task/{task_id}")
+        try:
+            # Verify task exists before attempting to delete
+            task = self.get_task(project_id, task_id)
+            if 'error' in task:
+                return {"error": f"Cannot delete task: {task['error']}"}
+            
+            # Task exists, proceed with deletion
+            logger.info(f"Deleting task {task_id} from project {project_id}")
+            result = self._make_request("DELETE", f"/project/{project_id}/task/{task_id}")
+            
+            # Verify deletion was successful by checking if task still exists
+            if 'error' not in result:
+                verification = self.get_task(project_id, task_id)
+                if 'error' in verification and "404" in str(verification['error']):
+                    # Task not found after deletion, this is expected
+                    return {"success": True, "message": f"Task {task_id} deleted successfully"}
+                elif 'error' in verification:
+                    # Some other error occurred during verification
+                    logger.warning(f"Task deletion verification failed: {verification['error']}")
+                    return {"success": True, "message": f"Task {task_id} deletion reported as successful, but verification failed"}
+                else:
+                    # Task still exists
+                    logger.error(f"Task {task_id} still exists after deletion attempt")
+                    return {"error": "Task deletion reported as successful, but task still exists"}
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error deleting task {task_id}: {e}")
+            return {"error": f"Failed to delete task: {str(e)}"}
