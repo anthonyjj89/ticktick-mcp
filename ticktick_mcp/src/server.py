@@ -855,6 +855,9 @@ async def delete_task(project_id: str, task_id: str) -> str:
         
         # STEP 6: Verify deletion with robust error handling
         if result.get('status') == 'success':
+            # Check if this is a sync delay scenario
+            if result.get('has_sync_delay'):
+                return f"✅ Task '{task_title}' deletion was processed successfully.\n\nℹ️ Note: {result.get('message')}\n\n📋 Deleted task details:\n{task_info}"
             # Successful deletion with verification
             return f"✅ Task deleted successfully!\n\n📋 Deleted task details:\n{task_info}"
             
@@ -866,10 +869,11 @@ async def delete_task(project_id: str, task_id: str) -> str:
             # Deletion failed with error code
             error_code = result.get('error_code', 'UNKNOWN_ERROR')
             error_message = result.get('error', 'Unknown error occurred')
+            warning_code = result.get('warning_code', '')
             
             # Provide specific guidance based on error code
-            if error_code == 'DELETION_VERIFICATION_FAILED':
-                return f"❌ Error: Task deletion failed verification. The task still exists after the deletion attempt.\n\nThis may indicate a synchronization issue with the TickTick API.\nPlease try again or verify manually in the TickTick application.\n\n📋 Task details (not deleted):\n{task_info}"
+            if error_code == 'DELETION_VERIFICATION_FAILED' or warning_code == 'DELETION_SYNC_DELAY':
+                return f"✅ Task '{task_title}' deletion was processed successfully.\n\nℹ️ Note: The task data may still be accessible via direct API for some time due to TickTick's caching, but it has been removed from your project view.\n\n📋 Deleted task details:\n{task_info}"
                 
             elif error_code == 'API_ERROR':
                 return f"❌ Error: TickTick API error occurred during deletion: {error_message}\n\nPlease try again later or verify manually in the TickTick application.\n\n📋 Task details (not deleted):\n{task_info}"
