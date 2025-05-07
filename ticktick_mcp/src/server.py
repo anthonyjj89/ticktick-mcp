@@ -878,31 +878,35 @@ async def delete_task(project_id: str, task_id: str) -> str:
                 return f"❌ Error: {error_message}\n\nError code: {error_code}\n\n📋 Task details (not deleted):\n{task_info}"
         
         else:
-            # Fallback for unexpected result format
-            # Task sync delay handling - Warn about potential delay
-            success_msg = f"✅ Task deletion initiated successfully for '{task_title}'!\n\n"
-            success_msg += "Note: Due to TickTick API sync delays, the task may appear in listings for a short period. "
-            success_msg += "The deletion will complete on TickTick's servers momentarily.\n\n"
-            success_msg += f"📋 Deleted task details:\n{task_info}"
+            # Verify deletion using project task list approach
+            # Initial success message
+            success_msg = f"✅ Task deletion initiated for '{task_title}'.\n\n"
             
-            # Attempt verification, but don't rely on it for success/failure messaging
+            # Check project task listing to verify the task no longer appears there
             try:
-                # Add a short delay to allow for backend sync
-                time.sleep(2)
+                # Get the project tasks
+                project_data = ticktick.get_project_with_data(project_id)
                 
-                verification = ticktick.get_task(project_id, task_id)
-                if 'error' in verification and "404" in str(verification.get('error', '')):
-                    # Task not found - confirmation that deletion was processed immediately
-                    success_msg = f"✅ Task '{task_title}' deleted and confirmed gone from TickTick.\n\n📋 Deleted task details:\n{task_info}"
-                elif 'error' not in verification:
-                    # Task still exists in API - add note about sync delay
-                    logger.info(f"Task {task_id} still exists after deletion - likely due to TickTick API sync delay")
-                    success_msg += "\n⚠️ Verification detected the task still exists in the API, which is common due to TickTick's sync delay. "
-                    success_msg += "The task should disappear shortly."
+                if 'error' in project_data:
+                    # Couldn't verify via project listing, but API deletion was successful
+                    logger.warning(f"Couldn't verify task deletion via project listing: {project_data['error']}")
+                    success_msg = f"✅ Task '{task_title}' deletion was successful, but couldn't verify removal from project listing.\n\n📋 Deleted task details:\n{task_info}"
+                else:
+                    # Check if task still appears in the project listing
+                    tasks = project_data.get('tasks', [])
+                    task_ids = [t.get('id') for t in tasks]
+                    
+                    if task_id not in task_ids:
+                        # Task no longer appears in project listing - confirmed deletion
+                        success_msg = f"✅ Task '{task_title}' deleted and confirmed removed from project.\n\n📋 Deleted task details:\n{task_info}"
+                    else:
+                        # Task still appears in project listing - potential sync issue
+                        logger.warning(f"Task {task_id} still appears in project listing after deletion")
+                        success_msg = f"⚠️ Task '{task_title}' deletion was initiated, but the task still appears in the project listing.\n\nThis may be due to a sync delay. Please refresh the project after a moment to confirm deletion.\n\n📋 Task details:\n{task_info}"
             except Exception as e:
                 # Verification had an error, but the deletion was still reported as successful
                 logger.warning(f"Task deletion verification encountered an error: {e}")
-                success_msg += "\n⚠️ Verification check encountered an error, but the deletion command was successful."
+                success_msg = f"✅ Task '{task_title}' deletion was successful, but verification encountered an error: {str(e)}\n\n📋 Deleted task details:\n{task_info}"
             
             return success_msg
     
