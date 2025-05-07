@@ -880,10 +880,13 @@ async def delete_task(project_id: str, task_id: str) -> str:
         else:
             # Verify deletion using project task list approach
             # Initial success message
-            success_msg = f"✅ Task deletion initiated for '{task_title}'.\n\n"
+            success_msg = f"✅ Task deletion of '{task_title}' successfully processed.\n\n"
             
             # Check project task listing to verify the task no longer appears there
             try:
+                # Add a small delay to allow for backend sync
+                time.sleep(1.5)
+                
                 # Get the project tasks
                 project_data = ticktick.get_project_with_data(project_id)
                 
