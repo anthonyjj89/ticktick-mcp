@@ -1,6 +1,6 @@
 # TickTick MCP Server
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue)
+![Version](https://img.shields.io/badge/version-1.3.0-blue)
 
 > Enhanced TickTick integration for Claude with improved task management and robust API support
 
@@ -10,7 +10,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 
 - 📋 View all your TickTick projects and tasks with clear ID references
 - ✏️ Create new projects and tasks through natural language
-- 🔄 Update existing task details with better change tracking
+- 🔄 Update existing task details with better change tracking and data preservation
 - ✅ Mark tasks as complete with verification
 - 🗑️ Delete tasks and projects with robust error handling
 - 🔍 Find and list all tasks across projects for easy management
@@ -21,7 +21,17 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 
 ## Recent Enhancements
 
-### Version 1.2.0 (Current)
+### Version 1.3.0 (Current)
+
+- **Enhanced Task ID Visibility**: Redesigned task and project display with visually distinct ID sections
+- **Complete Data Preservation**: Fixed update_task method to properly preserve all existing task data
+- **Comprehensive Error Handling**: Improved error messages for all API operations
+- **Extended Verification**: All CRUD operations now include pre and post-operation verification
+- **Informative Error Messages**: API errors now include error codes, helpful descriptions, and resolution hints
+- **Rate Limit Handling**: Added specific handling for rate limit errors with retry functionality
+- **Detailed Operation Feedback**: All operations now provide clear success/error indicators and detailed reports
+
+### Version 1.2.0
 
 - **Improved Task Identification**: Tasks now prominently display their IDs for easier reference
 - **Robust Update/Delete Operations**: Better error handling and verification for all CRUD operations
@@ -153,6 +163,51 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 | `delete_task` | Delete a task | `project_id`, `task_id` |
 | `create_project` | Create a new project | `name`, `color` (optional), `view_mode` (optional) |
 | `delete_project` | Delete a project | `project_id` |
+
+## Enhanced Error Handling and Verification
+
+Version 1.3.0 includes significant improvements to error handling and verification throughout the application:
+
+### Improved Error Messages
+
+All error messages now follow a consistent format with:
+- Clear visual indicators (❌ for errors, ⚠️ for warnings, ✅ for success)
+- Specific error codes to help identify issues
+- Detailed descriptions of what went wrong
+- Suggestions for resolution when possible
+
+Example error message:
+```
+❌ Error: Project not found (ID: 6226ff9877acee87727fxyz).
+The project may have been deleted or never existed.
+
+Please verify the project ID is correct.
+```
+
+### Comprehensive Verification
+
+All CRUD operations now include multiple verification steps:
+
+1. **Pre-operation verification**:
+   - Validate all input parameters
+   - Check that referenced resources exist
+   - Ensure inputs conform to TickTick API requirements
+
+2. **Post-operation verification**:
+   - Verify operations were successful by retrieving updated resources
+   - Compare actual results with expected results
+   - Provide detailed feedback on any discrepancies
+
+3. **Enhanced data preservation**:
+   - Task updates now preserve all existing data not explicitly changed
+   - Automatic field retention ensures no data is lost during partial updates
+
+### API Robustness Improvements
+
+- **Rate limit handling**: Automatic detection of rate limits with helpful feedback
+- **Timeout handling**: Better handling of API timeouts with detailed error messages
+- **Retry mechanisms**: Automatic retry for transient errors
+- **Resource validation**: Thorough validation of resources before operations
 
 ## New Tools
 

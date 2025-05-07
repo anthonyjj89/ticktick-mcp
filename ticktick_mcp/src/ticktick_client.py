@@ -3,6 +3,7 @@ import json
 import base64
 import requests
 import logging
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -128,17 +129,19 @@ class TickTickClient:
         
         logger.debug("Tokens saved to .env file")
     
-    def _make_request(self, method: str, endpoint: str, data=None) -> Dict:
+    def _make_request(self, method: str, endpoint: str, data=None, timeout: int = 30, retry_on_error: bool = True) -> Dict:
         """
-        Makes a request to the TickTick API.
+        Makes a request to the TickTick API with enhanced error handling.
         
         Args:
             method: HTTP method (GET, POST, PUT, DELETE)
             endpoint: API endpoint (without base URL)
             data: Request data (for POST, PUT)
+            timeout: Request timeout in seconds (default: 30)
+            retry_on_error: Whether to retry on specific transient errors (default: True)
         
         Returns:
-            API response as a dictionary
+            API response as a dictionary with consistent error format
         """
         url = f"{self.base_url}{endpoint}"
         
@@ -148,64 +151,233 @@ class TickTickClient:
             if data:
                 logger.debug(f"Request data: {json.dumps(data, indent=2)}")
             
+            # Request options for all requests
+            request_options = {
+                "headers": self.headers,
+                "timeout": timeout
+            }
+            
             # Make the request
             if method == "GET":
-                response = requests.get(url, headers=self.headers)
+                response = requests.get(url, **request_options)
             elif method == "POST":
-                response = requests.post(url, headers=self.headers, json=data)
+                response = requests.post(url, json=data, **request_options)
             elif method == "DELETE":
-                response = requests.delete(url, headers=self.headers)
+                response = requests.delete(url, **request_options)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
             
-            # Check if the request was unauthorized (401)
+            # CASE 1: Authentication issues (401)
             if response.status_code == 401:
                 logger.info("Access token expired. Attempting to refresh...")
                 
                 # Try to refresh the access token
                 if self._refresh_access_token():
                     logger.info("Token refreshed. Retrying request...")
+                    # Update headers with new token
+                    request_options["headers"] = self.headers
+                    
                     # Retry the request with the new token
                     if method == "GET":
-                        response = requests.get(url, headers=self.headers)
+                        response = requests.get(url, **request_options)
                     elif method == "POST":
-                        response = requests.post(url, headers=self.headers, json=data)
+                        response = requests.post(url, json=data, **request_options)
                     elif method == "DELETE":
-                        response = requests.delete(url, headers=self.headers)
+                        response = requests.delete(url, **request_options)
                 else:
-                    logger.error("Failed to refresh token. Please re-authenticate.")
-                    return {"error": "Authentication failed. Please run 'uv run -m ticktick_mcp.cli auth' to reauthenticate."}
+                    logger.error("Failed to refresh token. Authentication required.")
+                    return {
+                        "error": "Authentication failed. Your access token is expired or invalid.",
+                        "error_code": "AUTH_FAILED",
+                        "status": "failed",
+                        "resolution": "Please run 'uv run -m ticktick_mcp.cli auth' to reauthenticate."
+                    }
             
-            # Capture detailed error information from 4xx/5xx responses
+            # CASE 2: Resource not found (404)
+            if response.status_code == 404:
+                error_detail = self._extract_error_details(response)
+                resource_type = "task" if "/task/" in endpoint else "project" if "/project/" in endpoint else "resource"
+                
+                logger.warning(f"{resource_type.capitalize()} not found: {endpoint} - {error_detail}")
+                return {
+                    "error": f"{resource_type.capitalize()} not found. It may have been deleted or never existed.",
+                    "error_code": "NOT_FOUND",
+                    "status": "failed",
+                    "http_status": 404,
+                    "details": error_detail
+                }
+            
+            # CASE 3: Rate limiting (429)
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After', '60')
+                error_detail = self._extract_error_details(response)
+                
+                logger.warning(f"Rate limit exceeded. Retry after {retry_after} seconds.")
+                return {
+                    "error": f"TickTick API rate limit exceeded. Please try again after {retry_after} seconds.",
+                    "error_code": "RATE_LIMITED",
+                    "status": "failed",
+                    "http_status": 429,
+                    "retry_after": retry_after,
+                    "details": error_detail
+                }
+            
+            # CASE 4: Server errors (5xx)
+            if response.status_code >= 500:
+                error_detail = self._extract_error_details(response)
+                
+                # Determine if this is a transient error we might want to retry
+                is_transient = response.status_code in (502, 503, 504)
+                
+                if is_transient and retry_on_error:
+                    logger.warning(f"Transient server error ({response.status_code}). Retrying request...")
+                    # Wait briefly before retrying
+                    time.sleep(1)
+                    # Retry with retry_on_error=False to prevent infinite retries
+                    return self._make_request(method, endpoint, data, timeout, False)
+                
+                logger.error(f"Server error: {response.status_code} - {error_detail}")
+                return {
+                    "error": f"TickTick server error (HTTP {response.status_code}). Please try again later.",
+                    "error_code": "SERVER_ERROR",
+                    "status": "failed",
+                    "http_status": response.status_code,
+                    "details": error_detail,
+                    "is_transient": is_transient
+                }
+            
+            # CASE 5: Other client errors (4xx)
             if response.status_code >= 400:
-                error_message = f"API request failed with status code: {response.status_code}"
-                try:
-                    error_detail = response.json()
-                    error_message += f" - {json.dumps(error_detail)}"
-                except Exception:
-                    error_message += f" - {response.text if response.text else 'No error details available'}"
-                    
-                logger.error(error_message)
-                return {"error": error_message}
+                error_detail = self._extract_error_details(response)
+                
+                # Map common status codes to more descriptive error codes
+                error_code_map = {
+                    400: "BAD_REQUEST",
+                    403: "FORBIDDEN",
+                    405: "METHOD_NOT_ALLOWED",
+                    409: "CONFLICT",
+                    413: "PAYLOAD_TOO_LARGE",
+                    415: "UNSUPPORTED_MEDIA_TYPE",
+                    422: "VALIDATION_ERROR"
+                }
+                
+                error_code = error_code_map.get(response.status_code, f"CLIENT_ERROR_{response.status_code}")
+                
+                logger.error(f"Client error: {response.status_code} - {error_detail}")
+                return {
+                    "error": f"Request error: {error_detail}",
+                    "error_code": error_code,
+                    "status": "failed",
+                    "http_status": response.status_code,
+                    "details": error_detail
+                }
             
-            # Return empty dict for 204 No Content
+            # CASE 6: Success with no content (204)
             if response.status_code == 204:
-                return {"success": True, "message": "Operation completed successfully"}
+                return {
+                    "success": True,
+                    "status": "success",
+                    "message": "Operation completed successfully",
+                    "http_status": 204
+                }
             
+            # CASE 7: Success with content (200)
             # Parse and validate the response
             try:
                 result = response.json()
                 logger.debug(f"API response: {json.dumps(result, indent=2)}")
+                
+                # Add standard success fields if they're not already present
+                if isinstance(result, dict) and "status" not in result:
+                    result["status"] = "success"
+                
                 return result
             except json.JSONDecodeError:
                 if response.text:
-                    return {"error": f"Invalid JSON response: {response.text}"}
-                return {"success": True, "message": "Operation completed successfully"}
+                    logger.warning(f"Received non-JSON response: {response.text[:100]}...")
+                    return {
+                        "error": f"Invalid JSON response from TickTick API",
+                        "error_code": "INVALID_RESPONSE_FORMAT",
+                        "status": "warning",
+                        "http_status": response.status_code,
+                        "raw_response": response.text[:1000]  # Limit to 1000 chars
+                    }
                 
+                # Empty response but success status code
+                return {
+                    "success": True,
+                    "status": "success",
+                    "message": "Operation completed successfully",
+                    "http_status": response.status_code
+                }
+                
+        except requests.exceptions.Timeout as e:
+            error_message = f"Request timed out after {timeout} seconds: {str(e)}"
+            logger.error(error_message)
+            return {
+                "error": error_message,
+                "error_code": "TIMEOUT",
+                "status": "failed",
+                "is_transient": True
+            }
+        except requests.exceptions.ConnectionError as e:
+            error_message = f"Connection error: {str(e)}"
+            logger.error(error_message)
+            return {
+                "error": "Unable to connect to TickTick API. Please check your internet connection.",
+                "error_code": "CONNECTION_ERROR",
+                "status": "failed",
+                "is_transient": True,
+                "details": str(e)
+            }
         except requests.exceptions.RequestException as e:
             error_message = f"API request failed: {str(e)}"
             logger.error(error_message)
-            return {"error": error_message}
+            return {
+                "error": error_message,
+                "error_code": "REQUEST_FAILED",
+                "status": "failed",
+                "details": str(e)
+            }
+        except Exception as e:
+            error_message = f"Unexpected error during API request: {str(e)}"
+            logger.error(error_message)
+            return {
+                "error": error_message,
+                "error_code": "UNEXPECTED_ERROR",
+                "status": "failed",
+                "details": str(e)
+            }
+            
+    def _extract_error_details(self, response):
+        """Extract error details from response object."""
+        try:
+            # Try to parse as JSON first
+            error_detail = response.json()
+            if isinstance(error_detail, dict) and 'error' in error_detail:
+                return error_detail['error']
+            return json.dumps(error_detail)
+        except Exception:
+            # Fall back to text or status description
+            if response.text:
+                return response.text
+            
+            # Map status codes to descriptions
+            status_descriptions = {
+                400: "Bad Request",
+                401: "Unauthorized",
+                403: "Forbidden",
+                404: "Not Found",
+                405: "Method Not Allowed",
+                409: "Conflict",
+                429: "Too Many Requests",
+                500: "Internal Server Error",
+                502: "Bad Gateway",
+                503: "Service Unavailable",
+                504: "Gateway Timeout"
+            }
+            
+            return status_descriptions.get(response.status_code, f"HTTP {response.status_code}")
     
     # Project methods
     def get_projects(self) -> List[Dict]:
@@ -288,60 +460,52 @@ class TickTickClient:
                    content: str = None, priority: int = None, 
                    start_date: str = None, due_date: str = None,
                    repeat_flag: str = None) -> Dict:
-        """Updates an existing task."""
+        """Updates an existing task with robust data preservation."""
         # First, get the current task to preserve existing data
         try:
             current_task = self.get_task(project_id, task_id)
             if 'error' in current_task:
                 return current_task  # Return the error
             
-            # Start with the current task data
-            data = {
-                "id": task_id,
-                "projectId": project_id
-            }
+            # Start with a complete copy of the current task data (complete data preservation)
+            data = current_task.copy()
             
-            # Update only the fields that are provided
+            # Ensure ID and projectId are always correct
+            data["id"] = task_id
+            data["projectId"] = project_id
+            
+            # Update only the fields that are explicitly provided
             if title is not None:
                 data["title"] = title
-            elif "title" in current_task:
-                data["title"] = current_task["title"]
                 
             if content is not None:
                 data["content"] = content
-            elif "content" in current_task:
-                data["content"] = current_task["content"]
                 
             if priority is not None:
                 data["priority"] = priority
-            elif "priority" in current_task:
-                data["priority"] = current_task["priority"]
                 
             if start_date is not None:
                 data["startDate"] = start_date
-            elif "startDate" in current_task:
-                data["startDate"] = current_task["startDate"]
                 
             if due_date is not None:
                 data["dueDate"] = due_date
-            elif "dueDate" in current_task:
-                data["dueDate"] = current_task["dueDate"]
                 
             if repeat_flag is not None:
                 data["repeatFlag"] = repeat_flag
-            elif "repeatFlag" in current_task:
-                data["repeatFlag"] = current_task["repeatFlag"]
             
-            # Include status if present in the current task
-            if "status" in current_task:
-                data["status"] = current_task["status"]
-                
-            # Include isAllDay if present in the current task
-            if "isAllDay" in current_task:
-                data["isAllDay"] = current_task["isAllDay"]
+            # Remove any fields that shouldn't be included in the update request
+            # These fields are typically server-managed or read-only
+            fields_to_remove = [
+                "createdTime", "completedTime", "modifiedTime", 
+                "etag", "timeZone", "sortOrder"
+            ]
+            
+            for field in fields_to_remove:
+                if field in data:
+                    data.pop(field)
             
             # Log the update data for debugging
-            logger.debug(f"Updating task {task_id} with data: {json.dumps(data, indent=2)}")
+            logger.debug(f"Updating task {task_id} with preserved data: {json.dumps(data, indent=2)}")
             
             return self._make_request("POST", f"/task/{task_id}", data)
             
@@ -353,34 +517,109 @@ class TickTickClient:
         """Marks a task as complete."""
         return self._make_request("POST", f"/project/{project_id}/task/{task_id}/complete")
     
-    def delete_task(self, project_id: str, task_id: str) -> Dict:
-        """Deletes a task."""
+    def delete_task(self, project_id: str, task_id: str, retry_count: int = 1) -> Dict:
+        """
+        Deletes a task with enhanced error handling and verification.
+        
+        Args:
+            project_id: ID of the project containing the task
+            task_id: ID of the task to delete
+            retry_count: Number of retry attempts for transient errors (default: 1)
+        
+        Returns:
+            Dictionary with operation result
+        """
         try:
+            # Verify project exists first
+            project = self.get_project(project_id)
+            if 'error' in project:
+                error_code = 'PROJECT_NOT_FOUND'
+                error_msg = f"Cannot delete task: Project not found - {project['error']}"
+                logger.error(error_msg)
+                return {
+                    "error": error_msg,
+                    "error_code": error_code,
+                    "status": "failed",
+                    "http_status": 404
+                }
+            
             # Verify task exists before attempting to delete
             task = self.get_task(project_id, task_id)
             if 'error' in task:
-                return {"error": f"Cannot delete task: {task['error']}"}
+                error_code = 'TASK_NOT_FOUND' if "404" in str(task.get('error', '')) else 'TASK_FETCH_ERROR'
+                error_msg = f"Cannot delete task: {task['error']}"
+                logger.error(error_msg)
+                return {
+                    "error": error_msg,
+                    "error_code": error_code,
+                    "status": "failed",
+                    "http_status": 404 if error_code == 'TASK_NOT_FOUND' else 400
+                }
+            
+            # Store task details for response
+            task_details = {
+                "title": task.get('title', 'Unknown'),
+                "id": task_id,
+                "project_id": project_id,
+                "project_name": project.get('name', 'Unknown Project')
+            }
             
             # Task exists, proceed with deletion
-            logger.info(f"Deleting task {task_id} from project {project_id}")
+            logger.info(f"Deleting task '{task.get('title', 'Unknown')}' (ID: {task_id}) from project '{project.get('name', 'Unknown')}' (ID: {project_id})")
             result = self._make_request("DELETE", f"/project/{project_id}/task/{task_id}")
             
-            # Verify deletion was successful by checking if task still exists
-            if 'error' not in result:
-                verification = self.get_task(project_id, task_id)
-                if 'error' in verification and "404" in str(verification['error']):
-                    # Task not found after deletion, this is expected
-                    return {"success": True, "message": f"Task {task_id} deleted successfully"}
-                elif 'error' in verification:
-                    # Some other error occurred during verification
-                    logger.warning(f"Task deletion verification failed: {verification['error']}")
-                    return {"success": True, "message": f"Task {task_id} deletion reported as successful, but verification failed"}
-                else:
-                    # Task still exists
-                    logger.error(f"Task {task_id} still exists after deletion attempt")
-                    return {"error": "Task deletion reported as successful, but task still exists"}
+            # Handle API errors
+            if 'error' in result:
+                # If we encounter a recoverable error and have retries left, retry the operation
+                recoverable_errors = ["timeout", "rate limit", "server error", "500", "503"]
+                if any(err in str(result['error']).lower() for err in recoverable_errors) and retry_count > 0:
+                    logger.warning(f"Encountered recoverable error: {result['error']}. Retrying... ({retry_count} attempts left)")
+                    return self.delete_task(project_id, task_id, retry_count - 1)
+                
+                # Not recoverable or out of retries
+                logger.error(f"Failed to delete task {task_id}: {result['error']}")
+                return {
+                    "error": f"API error while deleting task: {result['error']}",
+                    "error_code": "API_ERROR",
+                    "status": "failed",
+                    "task_details": task_details
+                }
             
-            return result
+            # Verify deletion was successful by checking if task still exists
+            verification = self.get_task(project_id, task_id)
+            if 'error' in verification and "404" in str(verification.get('error', '')):
+                # Task not found after deletion, this is expected - success!
+                logger.info(f"Successfully deleted task {task_id} from project {project_id}")
+                return {
+                    "success": True,
+                    "status": "success",
+                    "message": f"Task '{task_details['title']}' deleted successfully",
+                    "task_details": task_details
+                }
+            elif 'error' in verification:
+                # Some other error occurred during verification
+                logger.warning(f"Task deletion verification failed: {verification['error']}")
+                return {
+                    "status": "warning",
+                    "message": f"Task deletion reported as successful, but verification failed: {verification['error']}",
+                    "task_details": task_details,
+                    "requires_verification": True
+                }
+            else:
+                # Task still exists - deletion failed
+                logger.error(f"Task {task_id} still exists after deletion attempt")
+                return {
+                    "error": "Task deletion reported as successful, but task still exists",
+                    "error_code": "DELETION_VERIFICATION_FAILED",
+                    "status": "failed",
+                    "task_details": task_details
+                }
+            
         except Exception as e:
-            logger.error(f"Error deleting task {task_id}: {e}")
-            return {"error": f"Failed to delete task: {str(e)}"}
+            logger.error(f"Unexpected error deleting task {task_id}: {e}")
+            return {
+                "error": f"Failed to delete task: {str(e)}",
+                "error_code": "UNEXPECTED_ERROR",
+                "status": "failed",
+                "details": str(e)
+            }
