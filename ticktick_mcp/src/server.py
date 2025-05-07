@@ -893,7 +893,7 @@ async def delete_task(project_id: str, task_id: str) -> str:
                 if 'error' in project_data:
                     # Couldn't verify via project listing, but API deletion was successful
                     logger.warning(f"Couldn't verify task deletion via project listing: {project_data['error']}")
-                    success_msg = f"✅ Task '{task_title}' deletion was successful, but couldn't verify removal from project listing.\n\n📋 Deleted task details:\n{task_info}"
+                    success_msg = f"✅ Task '{task_title}' deletion was processed successfully.\n\nℹ️ Note: We couldn't verify the task's removal from project view, but the deletion request was accepted by TickTick.\n\n📋 Deleted task details:\n{task_info}"
                 else:
                     # Check if task still appears in the project listing
                     tasks = project_data.get('tasks', [])
@@ -901,15 +901,15 @@ async def delete_task(project_id: str, task_id: str) -> str:
                     
                     if task_id not in task_ids:
                         # Task no longer appears in project listing - confirmed deletion
-                        success_msg = f"✅ Task '{task_title}' deleted and confirmed removed from project.\n\n📋 Deleted task details:\n{task_info}"
+                        success_msg = f"✅ Task '{task_title}' deleted and removed from your project view.\n\n📋 Deleted task details:\n{task_info}"
                     else:
                         # Task still appears in project listing - potential sync issue
-                        logger.warning(f"Task {task_id} still appears in project listing after deletion")
-                        success_msg = f"⚠️ Task '{task_title}' deletion was initiated, but the task still appears in the project listing.\n\nThis may be due to a sync delay. Please refresh the project after a moment to confirm deletion.\n\n📋 Task details:\n{task_info}"
+                        logger.info(f"Task {task_id} still appears in project listing after deletion - likely due to sync delay")
+                        success_msg = f"ℹ️ Task '{task_title}' deletion was processed successfully. However, it may still appear in the project for a short time due to TickTick's sync delay.\n\nPlease refresh the project view after a moment.\n\n📋 Task details:\n{task_info}"
             except Exception as e:
                 # Verification had an error, but the deletion was still reported as successful
                 logger.warning(f"Task deletion verification encountered an error: {e}")
-                success_msg = f"✅ Task '{task_title}' deletion was successful, but verification encountered an error: {str(e)}\n\n📋 Deleted task details:\n{task_info}"
+                success_msg = f"✅ Task '{task_title}' deletion was processed successfully.\n\nℹ️ Note: We couldn't verify the task's removal from project view due to a technical issue, but the deletion request was accepted by TickTick.\n\n📋 Deleted task details:\n{task_info}"
             
             return success_msg
     
