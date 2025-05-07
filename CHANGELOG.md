@@ -2,6 +2,20 @@
 
 All notable changes to the TickTick MCP Server will be documented in this file.
 
+## [1.5.0] - 2024-05-07
+
+### Added
+- Enhanced Tag Support: Added `tags` parameter to create_task and update_task functions
+- Batch Task Creation: New create_tasks function for creating multiple tasks at once
+- Smart Tag Handling: Intelligent extraction and preservation of existing tags during updates
+- Tag Deduplication: Automatic handling of duplicate tags for cleaner task titles
+
+### Changed
+- Improved documentation with detailed examples for tags and batch operations
+- Enhanced error handling for batch operations with detailed success/failure reporting
+- Implemented intelligent tag extraction from existing task titles during updates
+- Added support for TickTick's batch API endpoints with graceful fallback to individual operations
+
 ## [1.4.0] - 2024-05-07
 
 ### Added

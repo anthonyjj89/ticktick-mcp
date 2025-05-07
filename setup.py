@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ticktick-mcp",
-    version="1.4.0",
+    version="1.5.0",
     description="Model Context Protocol (MCP) server for TickTick task management",
     author="Jaesung Park",
     author_email="parkjs814@gmail.com",

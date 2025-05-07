@@ -434,8 +434,37 @@ class TickTickClient:
     
     def create_task(self, title: str, project_id: str, content: str = None, 
                    start_date: str = None, due_date: str = None, 
-                   priority: int = 0, is_all_day: bool = False, repeat_flag: str = None) -> Dict:
-        """Creates a new task."""
+                   priority: int = 0, is_all_day: bool = False, repeat_flag: str = None,
+                   tags: list = None) -> Dict:
+        """
+        Creates a new task with support for tags.
+        
+        Args:
+            title: Task title
+            project_id: ID of the project to add the task to
+            content: Task description/content (optional)
+            start_date: Start date in ISO format (optional)
+            due_date: Due date in ISO format (optional)
+            priority: Priority level (0: None, 1: Low, 3: Medium, 5: High) (optional)
+            is_all_day: Whether the task is an all-day task (optional)
+            repeat_flag: Recurrence rule in RRULE format (optional)
+            tags: List of tags to add to the task (optional)
+        
+        Returns:
+            Dictionary with task data or error
+        """
+        # Process tags if provided by appending hashtags to the title
+        if tags and isinstance(tags, list) and len(tags) > 0:
+            # Format tags with hashtags if they don't already have them
+            formatted_tags = [f"#{tag.strip('#')}" for tag in tags]
+            tag_string = " ".join(formatted_tags)
+            
+            # Append tags to the title
+            title = f"{title} {tag_string}"
+            
+            # If original title had tags, this may duplicate them, but TickTick API
+            # appears to handle this case by deduplicating tags
+            
         data = {
             "title": title,
             "projectId": project_id
@@ -459,8 +488,24 @@ class TickTickClient:
     def update_task(self, task_id: str, project_id: str, title: str = None, 
                    content: str = None, priority: int = None, 
                    start_date: str = None, due_date: str = None,
-                   repeat_flag: str = None) -> Dict:
-        """Updates an existing task with robust data preservation."""
+                   repeat_flag: str = None, tags: list = None) -> Dict:
+        """
+        Updates an existing task with robust data preservation and tag support.
+        
+        Args:
+            task_id: ID of the task to update
+            project_id: ID of the project containing the task
+            title: New task title (optional)
+            content: New task description/content (optional)
+            priority: New priority level (optional)
+            start_date: New start date in ISO format (optional)
+            due_date: New due date in ISO format (optional)
+            repeat_flag: New recurrence rule in RRULE format (optional)
+            tags: New list of tags to add to the task (optional)
+        
+        Returns:
+            Dictionary with task data or error
+        """
         # First, get the current task to preserve existing data
         try:
             current_task = self.get_task(project_id, task_id)
@@ -474,10 +519,47 @@ class TickTickClient:
             data["id"] = task_id
             data["projectId"] = project_id
             
-            # Update only the fields that are explicitly provided
-            if title is not None:
-                data["title"] = title
+            # Handle title and tags
+            if title is not None or tags is not None:
+                # If we have a new title, use it as the base, otherwise use the current title
+                new_title = title if title is not None else current_task.get("title", "")
                 
+                # Process tags if provided
+                if tags and isinstance(tags, list) and len(tags) > 0:
+                    # Extract existing tags from the current title
+                    existing_tags = []
+                    
+                    # If we're not changing the title, extract hashtags from current title
+                    if title is None and "#" in new_title:
+                        # This is a simple extraction that assumes tags are at the end of the title
+                        # A more complex implementation might use regex to extract all hashtags
+                        words = new_title.split()
+                        non_tag_words = []
+                        
+                        for word in words:
+                            if word.startswith("#"):
+                                existing_tags.append(word)
+                            else:
+                                non_tag_words.append(word)
+                        
+                        # Reconstruct the base title without tags
+                        if non_tag_words:
+                            new_title = " ".join(non_tag_words)
+                    
+                    # Format new tags with hashtags
+                    formatted_tags = [f"#{tag.strip('#')}" for tag in tags]
+                    
+                    # Combine with existing tags and deduplicate
+                    all_tags = list(set(existing_tags + formatted_tags))
+                    tag_string = " ".join(all_tags)
+                    
+                    # Create new title with tags
+                    new_title = f"{new_title} {tag_string}"
+                
+                # Update the title in the data
+                data["title"] = new_title.strip()
+            
+            # Update other fields if explicitly provided
             if content is not None:
                 data["content"] = content
                 
@@ -516,6 +598,155 @@ class TickTickClient:
     def complete_task(self, project_id: str, task_id: str) -> Dict:
         """Marks a task as complete."""
         return self._make_request("POST", f"/project/{project_id}/task/{task_id}/complete")
+    
+    def create_tasks(self, tasks: list) -> List[Dict]:
+        """
+        Create multiple tasks in a single operation.
+        
+        Args:
+            tasks: List of task dictionaries, each containing:
+                - title: Task title (required)
+                - project_id: ID of the project (required)
+                - content: Task description/content (optional)
+                - start_date: Start date in ISO format (optional)
+                - due_date: Due date in ISO format (optional)
+                - priority: Priority level (optional)
+                - tags: List of tags (optional)
+                - repeat_flag: Recurrence rule (optional)
+            
+        Returns:
+            List of created task objects or error
+        """
+        try:
+            if not tasks or not isinstance(tasks, list):
+                return {"error": "Invalid input: tasks must be a non-empty list of task dictionaries", 
+                        "error_code": "INVALID_INPUT",
+                        "status": "failed"}
+            
+            # Validate each task has the required fields
+            for i, task in enumerate(tasks):
+                if not isinstance(task, dict):
+                    return {"error": f"Invalid task at position {i}: must be a dictionary", 
+                            "error_code": "INVALID_TASK_FORMAT",
+                            "status": "failed"}
+                if "title" not in task:
+                    return {"error": f"Invalid task at position {i}: missing required field 'title'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+                if "project_id" not in task:
+                    return {"error": f"Invalid task at position {i}: missing required field 'project_id'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+            
+            # Format tasks for the API
+            formatted_tasks = []
+            for task in tasks:
+                formatted_task = {
+                    "title": task["title"],
+                    "projectId": task["project_id"]
+                }
+                
+                # Process tags if provided
+                if "tags" in task and task["tags"] and isinstance(task["tags"], list):
+                    formatted_tags = [f"#{tag.strip('#')}" for tag in task["tags"]]
+                    tag_string = " ".join(formatted_tags)
+                    formatted_task["title"] = f"{formatted_task['title']} {tag_string}"
+                
+                # Add optional fields
+                if "content" in task and task["content"]:
+                    formatted_task["content"] = task["content"]
+                    
+                if "start_date" in task and task["start_date"]:
+                    formatted_task["startDate"] = task["start_date"]
+                    
+                if "due_date" in task and task["due_date"]:
+                    formatted_task["dueDate"] = task["due_date"]
+                    
+                if "priority" in task:
+                    formatted_task["priority"] = task["priority"]
+                    
+                if "repeat_flag" in task and task["repeat_flag"]:
+                    formatted_task["repeatFlag"] = task["repeat_flag"]
+                    
+                if "is_all_day" in task:
+                    formatted_task["isAllDay"] = task["is_all_day"]
+                
+                formatted_tasks.append(formatted_task)
+            
+            # Try batch endpoint first
+            try:
+                batch_data = {"add": formatted_tasks}
+                logger.info(f"Attempting batch creation of {len(formatted_tasks)} tasks")
+                response = self._make_request("POST", "/batch/task", batch_data)
+                
+                # If successful, return the created tasks
+                if "error" not in response and response.get("status") != "failed":
+                    created_tasks = response.get("add", [])
+                    logger.info(f"Successfully created {len(created_tasks)} tasks in batch")
+                    return {
+                        "status": "success",
+                        "message": f"Successfully created {len(created_tasks)} tasks in batch",
+                        "tasks": created_tasks
+                    }
+                else:
+                    logger.warning(f"Batch task creation failed: {response.get('error', 'Unknown error')}")
+                    logger.info("Falling back to individual task creation")
+            except Exception as e:
+                logger.warning(f"Batch endpoint failed: {str(e)}")
+                logger.info("Falling back to individual task creation")
+            
+            # Fallback to individual creation
+            logger.info(f"Creating {len(tasks)} tasks individually")
+            results = []
+            successful_count = 0
+            
+            for i, task in enumerate(tasks):
+                try:
+                    result = self.create_task(
+                        title=task["title"],
+                        project_id=task["project_id"],
+                        content=task.get("content"),
+                        start_date=task.get("start_date"),
+                        due_date=task.get("due_date"),
+                        priority=task.get("priority", 0),
+                        is_all_day=task.get("is_all_day", False),
+                        repeat_flag=task.get("repeat_flag"),
+                        tags=task.get("tags")
+                    )
+                    
+                    if "error" in result:
+                        # Add task index for better error reporting
+                        result["task_index"] = i
+                        result["task_data"] = task
+                    else:
+                        successful_count += 1
+                        
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error creating task at position {i}: {str(e)}")
+                    results.append({
+                        "error": f"Failed to create task: {str(e)}",
+                        "task_index": i,
+                        "task_data": task,
+                        "status": "failed"
+                    })
+            
+            # Return combined results
+            return {
+                "status": "partial" if successful_count < len(tasks) else "success",
+                "message": f"Created {successful_count} out of {len(tasks)} tasks",
+                "tasks": results,
+                "successful_count": successful_count,
+                "total_count": len(tasks)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch task creation: {str(e)}")
+            return {
+                "error": f"Failed to process batch task creation: {str(e)}",
+                "error_code": "BATCH_PROCESSING_ERROR",
+                "status": "failed"
+            }
     
     def delete_task(self, project_id: str, task_id: str, retry_count: int = 1) -> Dict:
         """

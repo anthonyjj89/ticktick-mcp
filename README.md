@@ -1,6 +1,6 @@
 # TickTick MCP Server
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue)
+![Version](https://img.shields.io/badge/version-1.5.0-blue)
 
 > Enhanced TickTick integration for Claude with improved task management and robust API support
 
@@ -21,7 +21,16 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 
 ## Recent Enhancements
 
-### Version 1.4.0 (Current)
+### Version 1.5.0 (Current)
+
+- **Enhanced Tag Support**: Added `tags` parameter to task creation and update functions for easy tagging
+- **Batch Task Creation**: New `create_tasks` function to create multiple tasks in a single operation
+- **Smart Tag Handling**: Intelligent tag extraction and preservation during task updates
+- **Tag Deduplication**: Automatic handling of duplicate tags for cleaner task titles
+- **Batch API Integration**: Support for TickTick's batch endpoints with graceful fallback
+- **Detailed Batch Results**: Clear success/failure reporting for batch operations
+
+### Version 1.4.0
 
 - **Improved Task Deletion Verification**: Enhanced verification process using project listing checks to accurately confirm deletions
 - **API Sync Delay Handling**: Added detection and appropriate handling of TickTick API sync delays
@@ -166,8 +175,9 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 | `get_task` | Get details about a specific task | `project_id`, `task_id` |
 | `list_all_tasks` | List all tasks across all projects | None |
 | `find_old_tasks` | Find tasks that haven't been updated | `days` (default: 30) |
-| `create_task` | Create a new task | `title`, `project_id`, `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional) |
-| `update_task` | Update an existing task | `task_id`, `project_id`, `title` (optional), `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional) |
+| `create_task` | Create a new task | `title`, `project_id`, `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional), `tags` (optional) |
+| `create_tasks` | Create multiple tasks at once | `tasks` (list of task dictionaries) |
+| `update_task` | Update an existing task | `task_id`, `project_id`, `title` (optional), `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional), `tags` (optional) |
 | `complete_task` | Mark a task as complete | `project_id`, `task_id` |
 | `delete_task` | Delete a task | `project_id`, `task_id` |
 | `create_project` | Create a new project | `name`, `color` (optional), `view_mode` (optional) |
@@ -252,16 +262,81 @@ Find tasks that haven't been updated in the last 60 days
 
 Here are some example prompts to use with Claude after connecting the TickTick MCP server:
 
+### Basic Operations
 - "Show me all my TickTick projects"
-- "Create a new task called 'Finish MCP server documentation' in my work project with high priority"
 - "List all tasks in my personal project"
 - "Show me all tasks across all projects so I can find task IDs"
 - "Find tasks that haven't been updated in the last 30 days"
 - "Mark the task with ID '61234567891a1b2c3d4e5f6' as complete"
-- "Update the content of task '71234567891a1b2c3d4e5f7' to include meeting notes"
 - "Create a new project called 'Vacation Planning' with a blue color"
 - "Delete task '81234567891a1b2c3d4e5f8' from project '91234567891a1b2c3d4e5f9'"
+
+### Task Creation and Update
+- "Create a new task called 'Finish MCP server documentation' in my work project with high priority"
+- "Update the content of task '71234567891a1b2c3d4e5f7' to include meeting notes"
 - "Create a weekly recurring task called 'Team Meeting' in my work project due every Monday at 10:00 AM"
+
+### Using Tags (Version 1.5.0+)
+- "Create a task called 'Draft report' in my work project with tags 'priority', 'deadline', and 'report'"
+- "Update task '12345' in project '67890' to add tags 'follow-up' and 'meeting'"
+- "Create a task to 'Review marketing materials' with the tag 'marketing' in my work project"
+
+### Batch Task Creation (Version 1.5.0+)
+- "Create these tasks in my personal project:
+   1. Buy groceries (tag: shopping)
+   2. Call doctor for appointment (tags: health, priority)
+   3. Pay utility bills (tags: finance, monthly)"
+   
+- "Add the following tasks to my work project:
+   - Prepare slides for presentation (due next Friday, high priority, tags: presentation, meeting)
+   - Send weekly report (recurring weekly on Friday, tags: report, regular)
+   - Schedule team lunch (tags: team, social)"
+
+## Using Tags
+
+Version 1.5.0 introduces enhanced tag support that makes it easy to add tags to your tasks. Tags in TickTick are represented as hashtags (e.g., #work, #personal) and help with task organization and filtering.
+
+### Adding Tags to Tasks
+
+You can add tags when creating or updating tasks using the `tags` parameter:
+
+```
+Create a task called "Prepare presentation" in my work project with high priority and tags ["work", "meeting", "important"]
+```
+
+This will create a task with the hashtags #work, #meeting, and #important appended to the title.
+
+### Smart Tag Handling During Updates
+
+When updating a task, the system intelligently handles tags:
+
+1. If you provide both a new title and tags, the new title and tags will completely replace the existing ones
+2. If you provide only tags (no title), the existing non-tag portion of the title is preserved, and only the tags are updated
+3. Duplicate tags are automatically removed
+
+Example:
+```
+Update the task with ID "12345" in project "67890" with tags ["priority", "deadline"]
+```
+
+### Batch Task Creation
+
+Version 1.5.0 also adds support for creating multiple tasks at once through the `create_tasks` function:
+
+```
+Create these tasks in my project:
+- "Buy groceries" with tags ["shopping", "errands"]
+- "Schedule dentist" with tags ["health", "appointment"]
+- "Review report" with priority 5
+```
+
+The `create_tasks` function accepts a list of task dictionaries and creates them all in a single operation, which is more efficient than creating them one by one. Each task dictionary should contain:
+
+- `title`: Task title (required)
+- `project_id`: ID of the project (required)
+- Other fields like `content`, `start_date`, `due_date`, `priority`, `tags`, and `repeat_flag` are optional
+
+The response includes details about successful and failed tasks, making it easy to identify any issues.
 
 ## Using Recurring Tasks
 

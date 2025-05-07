@@ -458,7 +458,8 @@ async def create_task(
     start_date: str = None, 
     due_date: str = None, 
     priority: int = 0,
-    repeat_flag: str = None
+    repeat_flag: str = None,
+    tags: list = None
 ) -> str:
     """
     Create a new task in TickTick with enhanced validation and verification.
@@ -471,6 +472,7 @@ async def create_task(
         due_date: Due date in ISO format YYYY-MM-DDThh:mm:ss+0000 (optional)
         priority: Priority level (0: None, 1: Low, 3: Medium, 5: High) (optional)
         repeat_flag: Recurrence rule in RRULE format (e.g., "RRULE:FREQ=DAILY;INTERVAL=1") (optional)
+        tags: List of tags to add to the task (optional)
     """
     if not ticktick:
         if not initialize_client():
@@ -534,7 +536,8 @@ async def create_task(
             start_date=start_date,
             due_date=due_date,
             priority=priority,
-            repeat_flag=repeat_flag
+            repeat_flag=repeat_flag,
+            tags=tags
         )
         
         if 'error' in task:
@@ -594,7 +597,8 @@ async def update_task(
     start_date: str = None,
     due_date: str = None,
     priority: int = None,
-    repeat_flag: str = None
+    repeat_flag: str = None,
+    tags: list = None
 ) -> str:
     """
     Update an existing task in TickTick with improved data preservation.
@@ -608,6 +612,7 @@ async def update_task(
         due_date: New due date in ISO format YYYY-MM-DDThh:mm:ss+0000 (optional)
         priority: New priority level (0: None, 1: Low, 3: Medium, 5: High) (optional)
         repeat_flag: Recurrence rule in RRULE format (e.g., "RRULE:FREQ=DAILY;INTERVAL=1") (optional)
+        tags: List of tags to add to the task (optional)
     """
     if not ticktick:
         if not initialize_client():
@@ -669,6 +674,24 @@ async def update_task(
         if repeat_flag is not None and repeat_flag != existing_task.get('repeatFlag'):
             old_flag = existing_task.get('repeatFlag', 'None')
             changes.append(f"Repeat flag: '{old_flag}' → '{repeat_flag}'")
+        if tags is not None:
+            # Extract existing tags from title (TickTick stores tags in title with '#' prefix)
+            existing_tags = []
+            title_to_check = existing_task.get('title', '')
+            if '#' in title_to_check:
+                # Simple extraction based on words starting with #
+                words = title_to_check.split()
+                for word in words:
+                    if word.startswith('#'):
+                        existing_tags.append(word)
+            
+            # Format new tags for display
+            formatted_new_tags = [f"#{tag.strip('#')}" for tag in tags]
+            existing_display = ", ".join(existing_tags) if existing_tags else "None"
+            new_display = ", ".join(formatted_new_tags) if formatted_new_tags else "None"
+            
+            if existing_display != new_display:
+                changes.append(f"Tags: '{existing_display}' → '{new_display}'")
         
         # If no changes requested, inform the user
         if not changes:
@@ -684,7 +707,8 @@ async def update_task(
             start_date=start_date,
             due_date=due_date,
             priority=priority,
-            repeat_flag=repeat_flag
+            repeat_flag=repeat_flag,
+            tags=tags
         )
         
         if 'error' in task:
@@ -1013,6 +1037,109 @@ async def create_project(
     except Exception as e:
         logger.error(f"Error in create_project: {e}")
         return f"❌ Error creating project: {str(e)}\n\nPlease check your inputs and try again."
+
+@mcp.tool()
+async def create_tasks(tasks: list) -> str:
+    """
+    Create multiple tasks at once with batch processing.
+    
+    Args:
+        tasks: List of task dictionaries, each containing:
+            - title: Task title (required)
+            - project_id: ID of the project (required)
+            - content: Task description/content (optional)
+            - start_date: Start date in ISO format (optional)
+            - due_date: Due date in ISO format (optional)
+            - priority: Priority level (optional)
+            - tags: List of tags (optional)
+            - repeat_flag: Recurrence rule (optional)
+    """
+    if not ticktick:
+        if not initialize_client():
+            return "❌ Failed to initialize TickTick client. Please check your API credentials."
+    
+    # Input validation
+    if not tasks or not isinstance(tasks, list):
+        return "❌ Invalid input: tasks must be a non-empty list of task dictionaries."
+    
+    if len(tasks) == 0:
+        return "❌ Empty task list provided. Please provide at least one task to create."
+    
+    # Validate each task has the required fields
+    for i, task in enumerate(tasks):
+        if not isinstance(task, dict):
+            return f"❌ Invalid task at position {i}: must be a dictionary."
+        if "title" not in task:
+            return f"❌ Invalid task at position {i}: missing required field 'title'."
+        if "project_id" not in task:
+            return f"❌ Invalid task at position {i}: missing required field 'project_id'."
+    
+    # Create tasks in batch
+    logger.info(f"Creating {len(tasks)} tasks in batch")
+    result = ticktick.create_tasks(tasks)
+    
+    # Handle different result scenarios
+    if 'error' in result:
+        return f"❌ Error creating tasks: {result['error']}"
+    
+    if result.get('status') == 'success':
+        created_tasks = result.get('tasks', [])
+        
+        # If batch API returned created tasks directly
+        if isinstance(created_tasks, list) and all(isinstance(t, dict) for t in created_tasks):
+            success_msg = f"✅ Successfully created {len(created_tasks)} tasks:\n\n"
+            
+            # Format a brief summary of created tasks
+            for i, task in enumerate(created_tasks, 1):
+                task_title = task.get('title', 'Unnamed task')
+                project_id = task.get('projectId', 'Unknown project')
+                success_msg += f"{i}. '{task_title}' in project {project_id}\n"
+            
+            return success_msg
+        
+        # If we have a successful message
+        return f"✅ {result.get('message', 'Tasks created successfully.')}"
+    
+    elif result.get('status') == 'partial':
+        # Some tasks created, some failed
+        success_count = result.get('successful_count', 0)
+        total_count = result.get('total_count', len(tasks))
+        
+        partial_msg = f"⚠️ Partially successful: Created {success_count} out of {total_count} tasks.\n\n"
+        
+        # Add details about successful and failed tasks
+        successful_tasks = []
+        failed_tasks = []
+        
+        for task_result in result.get('tasks', []):
+            if 'error' in task_result:
+                failed_tasks.append({
+                    'index': task_result.get('task_index', -1),
+                    'title': task_result.get('task_data', {}).get('title', 'Unknown'),
+                    'error': task_result.get('error', 'Unknown error')
+                })
+            else:
+                successful_tasks.append({
+                    'title': task_result.get('title', 'Unknown'),
+                    'id': task_result.get('id', 'Unknown')
+                })
+        
+        # Add successful tasks summary
+        if successful_tasks:
+            partial_msg += f"Successfully created tasks:\n"
+            for i, task in enumerate(successful_tasks, 1):
+                partial_msg += f"{i}. '{task['title']}' (ID: {task['id']})\n"
+        
+        # Add failed tasks with errors
+        if failed_tasks:
+            partial_msg += f"\nFailed tasks:\n"
+            for i, task in enumerate(failed_tasks, 1):
+                partial_msg += f"{i}. '{task['title']}' - Error: {task['error']}\n"
+        
+        return partial_msg
+    
+    # Generic error case
+    return f"⚠️ Unexpected result from batch task creation: {json.dumps(result)}"
 
 @mcp.tool()
 async def delete_project(project_id: str) -> str:
