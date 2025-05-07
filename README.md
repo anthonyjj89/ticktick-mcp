@@ -1,6 +1,6 @@
 # TickTick MCP Server
 
-![Version](https://img.shields.io/badge/version-1.3.0-blue)
+![Version](https://img.shields.io/badge/version-1.4.0-blue)
 
 > Enhanced TickTick integration for Claude with improved task management and robust API support
 
@@ -21,7 +21,16 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 
 ## Recent Enhancements
 
-### Version 1.3.0 (Current)
+### Version 1.4.0 (Current)
+
+- **Improved Task Deletion Verification**: Enhanced verification process using project listing checks to accurately confirm deletions
+- **API Sync Delay Handling**: Added detection and appropriate handling of TickTick API sync delays
+- **Informational Notices for Sync Issues**: Changed error messages (❌) to informational notices (ℹ️) for sync-related issues
+- **Consistent Client-Server Messaging**: Ensured consistent messaging between client and server layers
+- **Robust Error Recovery**: Better handling of transient API issues with automatic retries
+- **Detailed Task Deletion Feedback**: Added clear success indicators and detailed information about deleted tasks
+
+### Version 1.3.0
 
 - **Enhanced Task ID Visibility**: Redesigned task and project display with visually distinct ID sections
 - **Complete Data Preservation**: Fixed update_task method to properly preserve all existing task data
@@ -166,7 +175,7 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 
 ## Enhanced Error Handling and Verification
 
-Version 1.3.0 includes significant improvements to error handling and verification throughout the application:
+Version 1.4.0 includes significant improvements to error handling and verification throughout the application, especially for task deletion operations:
 
 ### Improved Error Messages
 
@@ -208,6 +217,16 @@ All CRUD operations now include multiple verification steps:
 - **Timeout handling**: Better handling of API timeouts with detailed error messages
 - **Retry mechanisms**: Automatic retry for transient errors
 - **Resource validation**: Thorough validation of resources before operations
+
+### Task Deletion Verification Improvements
+
+The TickTick API has a unique behavior where deleted tasks may still be accessible via direct lookup for some time after deletion due to caching or sync delays. Version 1.4.0 includes specialized handling for this:
+
+- **Multiple verification methods**: Uses both direct task lookup and project task listing to verify deletions
+- **Sync delay detection**: Identifies when a task appears to exist due to API caching but is actually deleted
+- **Informational notices**: Provides clear informational notices (ℹ️) instead of errors when sync delays occur
+- **Verification delay**: Adds a small delay before verification to allow backend synchronization
+- **Clear success indicators**: Shows ✅ success indicators with detailed information about the deleted task
 
 ## New Tools
 
