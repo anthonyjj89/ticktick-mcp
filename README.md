@@ -24,11 +24,13 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Ti
 ### Version 1.5.0 (Current)
 
 - **Enhanced Tag Support**: Added `tags` parameter to task creation and update functions for easy tagging
-- **Batch Task Creation**: New `create_tasks` function to create multiple tasks in a single operation
+- **Complete Batch Operations**: New functions for batch creation, update, completion, and deletion of tasks
 - **Smart Tag Handling**: Intelligent tag extraction and preservation during task updates
 - **Tag Deduplication**: Automatic handling of duplicate tags for cleaner task titles
 - **Batch API Integration**: Support for TickTick's batch endpoints with graceful fallback
 - **Detailed Batch Results**: Clear success/failure reporting for batch operations
+- **Safety Confirmation**: Required confirmation parameter for batch deletion operations
+- **Partial Success Handling**: Ability to continue processing batches even when some operations fail
 
 ### Version 1.4.0
 
@@ -178,6 +180,9 @@ Once connected, you'll see the TickTick MCP server tools available in Claude, in
 | `create_task` | Create a new task | `title`, `project_id`, `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional), `tags` (optional) |
 | `create_tasks` | Create multiple tasks at once | `tasks` (list of task dictionaries) |
 | `update_task` | Update an existing task | `task_id`, `project_id`, `title` (optional), `content` (optional), `start_date` (optional), `due_date` (optional), `priority` (optional), `repeat_flag` (optional), `tags` (optional) |
+| `update_tasks` | Update multiple tasks at once | `tasks` (list of task dictionaries with id and project_id) |
+| `complete_tasks` | Complete multiple tasks at once | `tasks` (list of task dictionaries with id/task_id and project_id) |
+| `delete_tasks` | Delete multiple tasks at once | `tasks` (list of task dictionaries with id/task_id and project_id), `confirm` (must be set to true) |
 | `complete_task` | Mark a task as complete | `project_id`, `task_id` |
 | `delete_task` | Delete a task | `project_id`, `task_id` |
 | `create_project` | Create a new project | `name`, `color` (optional), `view_mode` (optional) |
@@ -281,7 +286,9 @@ Here are some example prompts to use with Claude after connecting the TickTick M
 - "Update task '12345' in project '67890' to add tags 'follow-up' and 'meeting'"
 - "Create a task to 'Review marketing materials' with the tag 'marketing' in my work project"
 
-### Batch Task Creation (Version 1.5.0+)
+### Batch Operations (Version 1.5.0+)
+
+#### Batch Creation
 - "Create these tasks in my personal project:
    1. Buy groceries (tag: shopping)
    2. Call doctor for appointment (tags: health, priority)
@@ -291,6 +298,22 @@ Here are some example prompts to use with Claude after connecting the TickTick M
    - Prepare slides for presentation (due next Friday, high priority, tags: presentation, meeting)
    - Send weekly report (recurring weekly on Friday, tags: report, regular)
    - Schedule team lunch (tags: team, social)"
+
+#### Batch Update
+- "Update these tasks:
+   1. Task '12345' in project '67890' with new title 'Review updated document' and priority high
+   2. Task '54321' in project '67890' to add tags 'important' and 'deadline'"
+
+#### Batch Completion
+- "Mark these tasks as complete:
+   - Task '12345' in project '67890'
+   - Task '23456' in project '67890'
+   - Task '34567' in project '67890'"
+
+#### Batch Deletion
+- "Delete these tasks (confirm=true):
+   - Task '45678' in project '67890'
+   - Task '56789' in project '67890'"
 
 ## Using Tags
 
@@ -319,9 +342,13 @@ Example:
 Update the task with ID "12345" in project "67890" with tags ["priority", "deadline"]
 ```
 
-### Batch Task Creation
+### Complete Batch Operations
 
-Version 1.5.0 also adds support for creating multiple tasks at once through the `create_tasks` function:
+Version 1.5.0 adds support for performing operations on multiple tasks at once, providing significant efficiency improvements for bulk task management:
+
+#### Batch Task Creation (`create_tasks`)
+
+Create multiple tasks at once with a single operation:
 
 ```
 Create these tasks in my project:
@@ -330,13 +357,62 @@ Create these tasks in my project:
 - "Review report" with priority 5
 ```
 
-The `create_tasks` function accepts a list of task dictionaries and creates them all in a single operation, which is more efficient than creating them one by one. Each task dictionary should contain:
-
+The `create_tasks` function accepts a list of task dictionaries with:
 - `title`: Task title (required)
 - `project_id`: ID of the project (required)
 - Other fields like `content`, `start_date`, `due_date`, `priority`, `tags`, and `repeat_flag` are optional
 
-The response includes details about successful and failed tasks, making it easy to identify any issues.
+#### Batch Task Update (`update_tasks`)
+
+Update multiple tasks at once:
+
+```
+Update these tasks:
+1. Task ID "123" in project "456" with new title "Updated title" and priority 5
+2. Task ID "789" in project "456" with tags ["updated", "important"]
+```
+
+The `update_tasks` function accepts a list of task dictionaries with:
+- `id`: Task ID (required)
+- `project_id`: Project ID (required)
+- Other fields to update (title, content, dates, priority, tags, etc.) as optional parameters
+
+#### Batch Task Completion (`complete_tasks`)
+
+Complete multiple tasks at once:
+
+```
+Complete these tasks:
+- Task ID "123" in project "456"
+- Task ID "789" in project "456"
+```
+
+The `complete_tasks` function accepts a list of task dictionaries with:
+- `id` or `task_id`: Task ID (required)
+- `project_id`: Project ID (required)
+
+#### Batch Task Deletion (`delete_tasks`)
+
+Delete multiple tasks at once (with required confirmation):
+
+```
+Delete these tasks, confirm=true:
+- Task ID "123" in project "456"
+- Task ID "789" in project "456"
+```
+
+The `delete_tasks` function requires:
+- `tasks`: List of task dictionaries with id/task_id and project_id
+- `confirm`: Must be explicitly set to `true` as a safety measure
+
+#### Benefits of Batch Operations
+
+- **Efficiency**: Perform multiple operations with a single request
+- **Partial Success**: Operations continue even if some individual actions fail
+- **Detailed Reporting**: Clear breakdown of successful and failed operations
+- **Fallback Mechanisms**: Graceful degradation to individual operations when batch endpoints aren't available
+
+All batch operations provide detailed responses that show which operations succeeded and which failed, making it easy to identify and resolve any issues.
 
 ## Using Recurring Tasks
 

@@ -598,6 +598,262 @@ class TickTickClient:
     def complete_task(self, project_id: str, task_id: str) -> Dict:
         """Marks a task as complete."""
         return self._make_request("POST", f"/project/{project_id}/task/{task_id}/complete")
+        
+    def complete_tasks(self, tasks: list) -> Dict:
+        """
+        Complete multiple tasks in a single operation.
+        
+        Args:
+            tasks: List of task dictionaries, each containing:
+                - id or task_id: Task ID (required)
+                - project_id: Project ID (required)
+            
+        Returns:
+            Dictionary with operation results
+        """
+        try:
+            if not tasks or not isinstance(tasks, list):
+                return {"error": "Invalid input: tasks must be a non-empty list of task dictionaries", 
+                        "error_code": "INVALID_INPUT",
+                        "status": "failed"}
+            
+            # Validate each task has the required fields
+            for i, task in enumerate(tasks):
+                if not isinstance(task, dict):
+                    return {"error": f"Invalid task at position {i}: must be a dictionary", 
+                            "error_code": "INVALID_TASK_FORMAT",
+                            "status": "failed"}
+                
+                # Handle both 'id' and 'task_id' for flexibility
+                task_id = task.get("id") or task.get("task_id")
+                if not task_id:
+                    return {"error": f"Invalid task at position {i}: missing required field 'id' or 'task_id'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+                
+                if "project_id" not in task:
+                    return {"error": f"Invalid task at position {i}: missing required field 'project_id'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+            
+            # Process completions individually
+            # TickTick doesn't have a batch completion endpoint that we're aware of
+            results = []
+            successful_count = 0
+            
+            for i, task in enumerate(tasks):
+                try:
+                    # Extract required fields (allowing both id and task_id for flexibility)
+                    task_id = task.get("id") or task.get("task_id")
+                    project_id = task["project_id"]
+                    
+                    # Get task details before completion for the response
+                    task_details = None
+                    try:
+                        task_details = self.get_task(project_id, task_id)
+                        task_title = task_details.get('title', 'Unknown Task')
+                    except Exception:
+                        task_title = "Unknown Task"
+                    
+                    # Use existing complete_task method
+                    result = self.complete_task(project_id, task_id)
+                    
+                    # Process result
+                    if 'error' in result:
+                        result["task_index"] = i
+                        result["task_id"] = task_id
+                        result["project_id"] = project_id
+                        if task_details and 'error' not in task_details:
+                            result["task_details"] = task_details
+                    else:
+                        successful_count += 1
+                        
+                        # Enhance result with task details
+                        if not isinstance(result, dict):
+                            result = {
+                                "status": "success",
+                                "message": "Task completed successfully"
+                            }
+                        
+                        result["task_index"] = i
+                        result["task_id"] = task_id
+                        result["project_id"] = project_id
+                        result["task_title"] = task_title
+                        
+                        # Verify completion was successful
+                        try:
+                            # Allow a brief moment for the API to process the completion
+                            time.sleep(0.5)
+                            
+                            # Fetch the task to verify its status
+                            updated_task = self.get_task(project_id, task_id)
+                            if 'error' not in updated_task:
+                                status = updated_task.get('status', 0)
+                                if status != 2:  # 2 = completed in TickTick
+                                    result["status"] = "warning"
+                                    result["message"] = "Task completion may not have been fully processed"
+                                    result["actual_status"] = status
+                                else:
+                                    result["status"] = "success"
+                                    result["message"] = "Task completion verified successfully"
+                                    result["completion_time"] = updated_task.get('completedTime', 'Unknown')
+                        except Exception as verify_error:
+                            logger.warning(f"Error verifying task completion: {verify_error}")
+                            result["status"] = "warning"
+                            result["message"] = "Task completion processed but verification failed"
+                            result["verification_error"] = str(verify_error)
+                    
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error completing task at position {i}: {str(e)}")
+                    results.append({
+                        "error": f"Failed to complete task: {str(e)}",
+                        "error_code": "COMPLETION_ERROR",
+                        "status": "failed",
+                        "task_index": i,
+                        "task_id": task.get("id") or task.get("task_id", "Unknown"),
+                        "project_id": task.get("project_id", "Unknown")
+                    })
+            
+            # Return combined results
+            return {
+                "status": "partial" if successful_count < len(tasks) else "success",
+                "message": f"Completed {successful_count} out of {len(tasks)} tasks",
+                "tasks": results,
+                "successful_count": successful_count,
+                "total_count": len(tasks)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch task completion: {str(e)}")
+            return {
+                "error": f"Failed to process batch task completion: {str(e)}",
+                "error_code": "BATCH_COMPLETION_ERROR",
+                "status": "failed"
+            }
+    
+    def update_tasks(self, tasks: list) -> Dict:
+        """
+        Update multiple tasks in a single operation.
+        
+        Args:
+            tasks: List of task dictionaries, each containing:
+                - id: Task ID (required)
+                - project_id: Project ID (required)
+                - title: New task title (optional)
+                - content: New task description/content (optional)
+                - start_date: New start date (optional)
+                - due_date: New due date (optional)
+                - priority: New priority level (optional)
+                - tags: New list of tags (optional)
+                - repeat_flag: New recurrence rule (optional)
+            
+        Returns:
+            Dictionary with operation results
+        """
+        try:
+            if not tasks or not isinstance(tasks, list):
+                return {"error": "Invalid input: tasks must be a non-empty list of task dictionaries", 
+                        "error_code": "INVALID_INPUT",
+                        "status": "failed"}
+            
+            # Validate each task has the required fields
+            for i, task in enumerate(tasks):
+                if not isinstance(task, dict):
+                    return {"error": f"Invalid task at position {i}: must be a dictionary", 
+                            "error_code": "INVALID_TASK_FORMAT",
+                            "status": "failed"}
+                if "id" not in task:
+                    return {"error": f"Invalid task at position {i}: missing required field 'id'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+                if "project_id" not in task:
+                    return {"error": f"Invalid task at position {i}: missing required field 'project_id'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+            
+            # Process updates individually
+            # Note: TickTick doesn't have a true batch update endpoint that we're aware of,
+            # so we perform individual updates but present them as a batch
+            results = []
+            successful_count = 0
+            
+            for i, task in enumerate(tasks):
+                try:
+                    # Extract required fields
+                    task_id = task["id"]
+                    project_id = task["project_id"]
+                    
+                    # Extract optional fields
+                    title = task.get("title")
+                    content = task.get("content")
+                    start_date = task.get("start_date")
+                    due_date = task.get("due_date")
+                    priority = task.get("priority")
+                    tags = task.get("tags")
+                    repeat_flag = task.get("repeat_flag")
+                    
+                    # Use existing update_task method
+                    result = self.update_task(
+                        task_id=task_id,
+                        project_id=project_id,
+                        title=title,
+                        content=content,
+                        start_date=start_date,
+                        due_date=due_date,
+                        priority=priority,
+                        repeat_flag=repeat_flag,
+                        tags=tags
+                    )
+                    
+                    # Add task index for reference
+                    if isinstance(result, dict):
+                        if 'error' in result:
+                            # Already has error info, just add the index
+                            result["task_index"] = i
+                            result["task_id"] = task_id
+                            result["project_id"] = project_id
+                        else:
+                            successful_count += 1
+                    else:
+                        # Handle unexpected result format
+                        result = {
+                            "status": "success",
+                            "task_index": i,
+                            "task_id": task_id,
+                            "project_id": project_id,
+                            "result": result
+                        }
+                        successful_count += 1
+                        
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error updating task at position {i}: {str(e)}")
+                    results.append({
+                        "error": f"Failed to update task: {str(e)}",
+                        "error_code": "UPDATE_ERROR",
+                        "status": "failed",
+                        "task_index": i,
+                        "task_id": task.get("id", "Unknown"),
+                        "project_id": task.get("project_id", "Unknown")
+                    })
+            
+            # Return combined results
+            return {
+                "status": "partial" if successful_count < len(tasks) else "success",
+                "message": f"Updated {successful_count} out of {len(tasks)} tasks",
+                "tasks": results,
+                "successful_count": successful_count,
+                "total_count": len(tasks)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch task update: {str(e)}")
+            return {
+                "error": f"Failed to process batch task update: {str(e)}",
+                "error_code": "BATCH_UPDATE_ERROR",
+                "status": "failed"
+            }
     
     def create_tasks(self, tasks: list) -> List[Dict]:
         """
@@ -745,6 +1001,122 @@ class TickTickClient:
             return {
                 "error": f"Failed to process batch task creation: {str(e)}",
                 "error_code": "BATCH_PROCESSING_ERROR",
+                "status": "failed"
+            }
+    
+    def delete_tasks(self, tasks: list, confirm: bool = False) -> Dict:
+        """
+        Delete multiple tasks in a single operation with explicit confirmation required.
+        
+        Args:
+            tasks: List of task dictionaries, each containing:
+                - id or task_id: Task ID (required)
+                - project_id: Project ID (required)
+            confirm: Explicit confirmation to delete tasks (must be set to True)
+            
+        Returns:
+            Dictionary with operation results
+        """
+        try:
+            # SAFETY CHECK: Require explicit confirmation
+            if not confirm:
+                return {
+                    "error": "Batch deletion requires explicit confirmation. Set confirm=True to proceed.",
+                    "error_code": "CONFIRMATION_REQUIRED",
+                    "status": "failed"
+                }
+            
+            if not tasks or not isinstance(tasks, list):
+                return {"error": "Invalid input: tasks must be a non-empty list of task dictionaries", 
+                        "error_code": "INVALID_INPUT",
+                        "status": "failed"}
+            
+            # Validate each task has the required fields
+            for i, task in enumerate(tasks):
+                if not isinstance(task, dict):
+                    return {"error": f"Invalid task at position {i}: must be a dictionary", 
+                            "error_code": "INVALID_TASK_FORMAT",
+                            "status": "failed"}
+                
+                # Handle both 'id' and 'task_id' for flexibility
+                task_id = task.get("id") or task.get("task_id")
+                if not task_id:
+                    return {"error": f"Invalid task at position {i}: missing required field 'id' or 'task_id'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+                
+                if "project_id" not in task:
+                    return {"error": f"Invalid task at position {i}: missing required field 'project_id'", 
+                            "error_code": "MISSING_REQUIRED_FIELD",
+                            "status": "failed"}
+            
+            # Process deletions individually
+            results = []
+            successful_count = 0
+            
+            for i, task in enumerate(tasks):
+                try:
+                    # Extract required fields (allowing both id and task_id for flexibility)
+                    task_id = task.get("id") or task.get("task_id")
+                    project_id = task["project_id"]
+                    
+                    # Get task details before deletion for the response
+                    task_details = None
+                    try:
+                        task_details = self.get_task(project_id, task_id)
+                        task_title = task_details.get('title', 'Unknown Task')
+                    except Exception:
+                        task_title = "Unknown Task"
+                    
+                    # Use existing delete_task method
+                    result = self.delete_task(project_id, task_id)
+                    
+                    # Process result
+                    if isinstance(result, dict) and result.get('status') == 'failed' and 'error' in result:
+                        result["task_index"] = i
+                        result["task_id"] = task_id
+                        result["project_id"] = project_id
+                        if task_details and not isinstance(task_details, dict) or ('error' not in task_details):
+                            result["task_details"] = {"title": task_title}
+                    else:
+                        successful_count += 1
+                        
+                        # Make sure result is a proper dictionary
+                        if not isinstance(result, dict):
+                            result = {"status": "success", "message": "Task deleted successfully"}
+                        
+                        # Add task identification
+                        result["task_index"] = i
+                        result["task_id"] = task_id
+                        result["project_id"] = project_id
+                        result["task_title"] = task_title
+                    
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Error deleting task at position {i}: {str(e)}")
+                    results.append({
+                        "error": f"Failed to delete task: {str(e)}",
+                        "error_code": "DELETION_ERROR",
+                        "status": "failed",
+                        "task_index": i,
+                        "task_id": task.get("id") or task.get("task_id", "Unknown"),
+                        "project_id": task.get("project_id", "Unknown")
+                    })
+            
+            # Return combined results
+            return {
+                "status": "partial" if successful_count < len(tasks) else "success",
+                "message": f"Deleted {successful_count} out of {len(tasks)} tasks",
+                "tasks": results,
+                "successful_count": successful_count,
+                "total_count": len(tasks)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in batch task deletion: {str(e)}")
+            return {
+                "error": f"Failed to process batch task deletion: {str(e)}",
+                "error_code": "BATCH_DELETION_ERROR",
                 "status": "failed"
             }
     

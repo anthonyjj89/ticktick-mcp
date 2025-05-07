@@ -1039,6 +1039,237 @@ async def create_project(
         return f"❌ Error creating project: {str(e)}\n\nPlease check your inputs and try again."
 
 @mcp.tool()
+async def update_tasks(tasks: list) -> str:
+    """
+    Update multiple tasks at once with batch processing.
+    
+    Args:
+        tasks: List of task dictionaries, each containing:
+            - id: Task ID (required)
+            - project_id: Project ID (required)
+            - title: New task title (optional)
+            - content: New task description/content (optional)
+            - start_date: New start date (optional)
+            - due_date: New due date (optional)
+            - priority: New priority level (optional)
+            - tags: New list of tags (optional)
+            - repeat_flag: New recurrence rule (optional)
+    """
+    if not ticktick:
+        if not initialize_client():
+            return "❌ Failed to initialize TickTick client. Please check your API credentials."
+    
+    # Input validation
+    if not tasks or not isinstance(tasks, list):
+        return "❌ Invalid input: tasks must be a non-empty list of task dictionaries."
+    
+    if len(tasks) == 0:
+        return "❌ Empty task list provided. Please provide at least one task to update."
+    
+    # Call batch update in the client
+    logger.info(f"Updating {len(tasks)} tasks in batch")
+    result = ticktick.update_tasks(tasks)
+    
+    # Process results
+    if 'error' in result:
+        return f"❌ Error updating tasks: {result['error']}"
+    
+    successful_count = result.get('successful_count', 0)
+    total_count = result.get('total_count', len(tasks))
+    
+    if result.get('status') == 'success':
+        # All tasks were updated successfully
+        success_msg = f"✅ Successfully updated all {total_count} tasks.\n\n"
+        
+        # Add brief summary of updated tasks
+        success_msg += "Updated tasks:\n"
+        for i, task_result in enumerate(result.get('tasks', []), 1):
+            task_id = task_result.get('task_id', 'Unknown')
+            project_id = task_result.get('project_id', 'Unknown')
+            success_msg += f"{i}. Task ID: {task_id} in Project ID: {project_id}\n"
+        
+        return success_msg
+    
+    elif result.get('status') == 'partial':
+        # Some tasks were updated, some failed
+        partial_msg = f"⚠️ Partially successful: Updated {successful_count} out of {total_count} tasks.\n\n"
+        
+        # Add successful updates
+        if successful_count > 0:
+            partial_msg += "✅ Successfully updated:\n"
+            for i, task_result in enumerate(result.get('tasks', []), 1):
+                if task_result.get('status') != 'failed' and 'error' not in task_result:
+                    task_id = task_result.get('task_id', 'Unknown')
+                    project_id = task_result.get('project_id', 'Unknown')
+                    partial_msg += f"{i}. Task ID: {task_id} in Project ID: {project_id}\n"
+        
+        # Add failed updates
+        failed_count = total_count - successful_count
+        if failed_count > 0:
+            partial_msg += f"\n❌ Failed updates ({failed_count}):\n"
+            for i, task_result in enumerate(result.get('tasks', []), 1):
+                if task_result.get('status') == 'failed' or 'error' in task_result:
+                    task_id = task_result.get('task_id', 'Unknown')
+                    error = task_result.get('error', 'Unknown error')
+                    partial_msg += f"{i}. Task ID: {task_id} - Error: {error}\n"
+        
+        return partial_msg
+    
+    else:
+        # Unexpected status
+        return f"⚠️ Unexpected result from batch update: {json.dumps(result)}"
+
+@mcp.tool()
+async def complete_tasks(tasks: list) -> str:
+    """
+    Complete multiple tasks at once with batch processing.
+    
+    Args:
+        tasks: List of task dictionaries, each containing:
+            - id or task_id: Task ID (required)
+            - project_id: Project ID (required)
+    """
+    if not ticktick:
+        if not initialize_client():
+            return "❌ Failed to initialize TickTick client. Please check your API credentials."
+    
+    # Input validation
+    if not tasks or not isinstance(tasks, list):
+        return "❌ Invalid input: tasks must be a non-empty list of task dictionaries."
+    
+    if len(tasks) == 0:
+        return "❌ Empty task list provided. Please provide at least one task to complete."
+    
+    # Call batch completion in the client
+    logger.info(f"Completing {len(tasks)} tasks in batch")
+    result = ticktick.complete_tasks(tasks)
+    
+    # Process results
+    if 'error' in result:
+        return f"❌ Error completing tasks: {result['error']}"
+    
+    successful_count = result.get('successful_count', 0)
+    total_count = result.get('total_count', len(tasks))
+    
+    if result.get('status') == 'success':
+        # All tasks were completed successfully
+        success_msg = f"✅ Successfully completed all {total_count} tasks.\n\n"
+        
+        # Add brief summary of completed tasks
+        success_msg += "Completed tasks:\n"
+        for i, task_result in enumerate(result.get('tasks', []), 1):
+            task_title = task_result.get('task_title', 'Unknown task')
+            completion_time = task_result.get('completion_time', 'Unknown time')
+            success_msg += f"{i}. '{task_title}' completed at {completion_time}\n"
+        
+        return success_msg
+    
+    elif result.get('status') == 'partial':
+        # Some tasks were completed, some failed
+        partial_msg = f"⚠️ Partially successful: Completed {successful_count} out of {total_count} tasks.\n\n"
+        
+        # Add successful completions
+        if successful_count > 0:
+            partial_msg += "✅ Successfully completed:\n"
+            for i, task_result in enumerate(result.get('tasks', []), 1):
+                if task_result.get('status') != 'failed' and 'error' not in task_result:
+                    task_title = task_result.get('task_title', f"Task {task_result.get('task_id', 'Unknown')}")
+                    partial_msg += f"{i}. '{task_title}'\n"
+        
+        # Add failed completions
+        failed_count = total_count - successful_count
+        if failed_count > 0:
+            partial_msg += f"\n❌ Failed completions ({failed_count}):\n"
+            for i, task_result in enumerate(result.get('tasks', []), 1):
+                if task_result.get('status') == 'failed' or 'error' in task_result:
+                    task_id = task_result.get('task_id', 'Unknown')
+                    error = task_result.get('error', 'Unknown error')
+                    partial_msg += f"{i}. Task ID: {task_id} - Error: {error}\n"
+        
+        return partial_msg
+    
+    else:
+        # Unexpected status
+        return f"⚠️ Unexpected result from batch completion: {json.dumps(result)}"
+
+@mcp.tool()
+async def delete_tasks(tasks: list, confirm: bool = False) -> str:
+    """
+    Delete multiple tasks at once with batch processing.
+    
+    Args:
+        tasks: List of task dictionaries, each containing:
+            - id or task_id: Task ID (required)
+            - project_id: Project ID (required)
+        confirm: Explicit confirmation required to delete tasks (must be True)
+    """
+    if not ticktick:
+        if not initialize_client():
+            return "❌ Failed to initialize TickTick client. Please check your API credentials."
+    
+    # SAFETY CHECK: Require explicit confirmation
+    if not confirm:
+        return "❌ CONFIRMATION REQUIRED: Batch deletion requires explicit confirmation. Set confirm=True to proceed.\n\n⚠️ WARNING: This operation will permanently delete multiple tasks and cannot be undone."
+    
+    # Input validation
+    if not tasks or not isinstance(tasks, list):
+        return "❌ Invalid input: tasks must be a non-empty list of task dictionaries."
+    
+    if len(tasks) == 0:
+        return "❌ Empty task list provided. Please provide at least one task to delete."
+    
+    # Call batch deletion in the client
+    logger.info(f"Deleting {len(tasks)} tasks in batch (with confirmation)")
+    result = ticktick.delete_tasks(tasks, confirm=True)
+    
+    # Process results
+    if 'error' in result:
+        return f"❌ Error deleting tasks: {result['error']}"
+    
+    successful_count = result.get('successful_count', 0)
+    total_count = result.get('total_count', len(tasks))
+    
+    if result.get('status') == 'success':
+        # All tasks were deleted successfully
+        success_msg = f"✅ Successfully deleted all {total_count} tasks.\n\n"
+        
+        # Add brief summary of deleted tasks
+        success_msg += "Deleted tasks:\n"
+        for i, task_result in enumerate(result.get('tasks', []), 1):
+            task_title = task_result.get('task_title', f"Task {task_result.get('task_id', 'Unknown')}")
+            success_msg += f"{i}. '{task_title}'\n"
+        
+        return success_msg
+    
+    elif result.get('status') == 'partial':
+        # Some tasks were deleted, some failed
+        partial_msg = f"⚠️ Partially successful: Deleted {successful_count} out of {total_count} tasks.\n\n"
+        
+        # Add successful deletions
+        if successful_count > 0:
+            partial_msg += "✅ Successfully deleted:\n"
+            for i, task_result in enumerate(result.get('tasks', []), 1):
+                if task_result.get('status') != 'failed' and 'error' not in task_result:
+                    task_title = task_result.get('task_title', f"Task {task_result.get('task_id', 'Unknown')}")
+                    partial_msg += f"{i}. '{task_title}'\n"
+        
+        # Add failed deletions
+        failed_count = total_count - successful_count
+        if failed_count > 0:
+            partial_msg += f"\n❌ Failed deletions ({failed_count}):\n"
+            for i, task_result in enumerate(result.get('tasks', []), 1):
+                if task_result.get('status') == 'failed' or 'error' in task_result:
+                    task_id = task_result.get('task_id', 'Unknown')
+                    error = task_result.get('error', 'Unknown error')
+                    partial_msg += f"{i}. Task ID: {task_id} - Error: {error}\n"
+        
+        return partial_msg
+    
+    else:
+        # Unexpected status
+        return f"⚠️ Unexpected result from batch deletion: {json.dumps(result)}"
+
+@mcp.tool()
 async def create_tasks(tasks: list) -> str:
     """
     Create multiple tasks at once with batch processing.
